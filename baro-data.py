@@ -84,31 +84,38 @@ class Part(object):
     what: Union[Identifier, Tag, Money]
     # positive if fabrication produces this item, negative if it consumes it
     amount: float
-    name: str | None = None
-    description: str | None = None
-    # condition required to be consumed or to be yielded?
-    # (CopyCondition and OutCondition{Min,Max} is used to specify condition of
-    # outputs/yielded items)
+    # condition (like health or quality) required to be consumed or to be
+    # yielded? (CopyCondition and OutCondition{Min,Max} is used to specify
+    # condition of outputs/yielded items)
     condition: tuple[float | None, float | None] = (None, None)
+
+    @property
+    def is_created(self):
+        return self.amount > 0
+
+    @property
+    def is_consumed(self):
+        return self.amount < 0
 
 
 @dataclass
 class RandomChoices(object):
     """barotrauma seems to do weighted random with replacement ..."""
 
-    choices: list[Part]
+    weighted_random_with_replacement: list[Part]
     amount: float
 
 
 @dataclass
-class Fabricate(object):
-    """Fabricate / Deconstruct / Price?"""
+class Process(object):
+    """Fabricate / Deconstruct / Price"""
 
     uses: list[Part | RandomChoices]
     skills: dict[str, int]
     station: str
     time: float
     needs_recipe: bool = False
+    description: str = None
 
 
 class MissingAttribute(ValueError):
@@ -257,18 +264,18 @@ def extract_Fabricate(el):
         "hidefornontraitors",
     )
 
-    res = Fabricate(
+    res = Process(
         uses=[
             Part(
                 what=extract_item_identifier(el.getparent()),
                 amount=attrs.use("amount", convert=float, default=1.0),
-                name=attrs.opt("displayname"),
             )
         ],
         skills={},
         station=attrs.use("suitablefabricators"),
         time=attrs.use("requiredtime", convert=float, default=1.0),
         needs_recipe=attrs.use("requiresrecipe", default=False, convert=xmlbool),
+        description=attrs.opt("displayname"),
     )
 
     requiredmoney = attrs.opt("requiredmoney")
@@ -323,7 +330,7 @@ def extract_Fabricate_Item(el):
                 attrs.or_none("mincondition", convert=float),
                 attrs.or_none("maxcondition", convert=float),
             ),
-            description=attrs.or_none("description"),
+            # description=attrs.or_none("description"),
         )
 
     else:
@@ -336,12 +343,12 @@ def extract_Fabricate_Item(el):
 def extract_Deconstruct(el):
     attrs = Attribs.from_element(el)
 
-    fab = Fabricate(
+    fab = Process(
         uses=[
             Part(
                 what=extract_item_identifier(el.getparent()),
                 amount=-1,
-                name=attrs.opt("displayname"),
+                # name=attrs.opt("displayname"),
             )
         ],
         skills={},
@@ -350,21 +357,59 @@ def extract_Deconstruct(el):
     )
 
     if attrs.use("chooserandom", convert=xmlbool, default=False):
-        choice = RandomChoices(choices=[], amount=attrs.use("amount", convert=float, default=1.0))
-        fab.uses.append(choice)
-        items = choice.choices
+        # Weird special case for genetics detailed in extract_Deconstruct_Item() ...
+        #
+        # I don't want to model identifying unidentified genetic material the
+        # way barotrauma does it because their way doesn't map to how players
+        # understand it.
+        #
+        # So this peeks if all children under chooserandom have the same
+        # requiredotheritem and "moves" it up in that case.
+        children = iter(el.xpath("*"))
+        if (
+            (head := next(children, None)) is not None
+            and (req := head.get("requiredotheritem")) is not None
+            and all(req == sibling.get("requiredotheritem") for sibling in children)
+        ):
+            for item in extract_Deconstruct_Item(head):
+                if isinstance(item, Part) and item.is_consumed:
+                    break
+            else:
+                raise Exception("did not find requiredotheritem")
+
+            for child in el.xpath("*"):
+                child.attrib.pop("requiredotheritem")
+
+            fab.uses.append(item)
+
+        choose = RandomChoices(
+            weighted_random_with_replacement=[],
+            amount=attrs.use("amount", convert=int, default=1),
+        )
+        fab.uses.append(choose)
     else:
-        items = fab.uses
+        choose = None
 
     for child in el.xpath("*"):
         try:
             for item in extract_Deconstruct_Item(child):
                 if isinstance(item, Part):
-                    if item.amount < 0:
-                        print(item)
-                        if item.what == 'geneticmaterial':
-                            breakpoint()
-                    pass # print(item)
+                    if item.is_created:
+                        if choose is None:
+                            fab.uses.append(item)
+                        else:
+                            choose.weighted_random_with_replacement.append(item)
+                    elif item.is_consumed:
+                        if choose is None:
+                            fab.uses.append(item)
+                        else:
+                            yield Warning(
+                                "requiredotheritem with chooserandom not handled ",
+                                element=el,
+                            )
+                            return  # skip this Deconstruct entirely
+                    else:
+                        yield Warning("item has no amount", item=item, element=child)
                 else:
                     yield item
         except MissingAttribute as err:
@@ -388,15 +433,15 @@ def extract_Deconstruct_Item(el):
     )
 
     if el.tag in (
-        "RequiredItem", # not to be confused with requiredotheritem lulz
+        "RequiredItem",  # not to be confused with requiredotheritem lulz
         "Item",
     ):
         # Deconstruction Items are yields, so positive amounts
         # mincondition maxcondition constrain whether that item qualifies to be
-        # yielded as an output, 
+        # yielded as an output,
         yield Part(
             what=attrs.use("identifier", convert=make_identifier),
-            amount=attrs.use("amount", convert=float, default=1.0),
+            amount=attrs.use("amount", convert=int, default=1),
             condition=(
                 attrs.or_none("mincondition", convert=float),
                 attrs.or_none("maxcondition", convert=float),
@@ -453,7 +498,7 @@ def extract_Deconstruct_Item(el):
 
         other = attrs.or_none("requiredotheritem")
         if other is not None:
-            yield Part(what=other, amount=-1)
+            yield Part(what=make_identifier(other), amount=-1)
 
     else:
         yield warn_unexpected_element(unexpected=el)
@@ -502,7 +547,7 @@ def extract_Price(el):
         station = attrs.use("storeidentifier")
 
         if attrs.use("sold", convert=xmlbool, default=is_sold_by_store_generally):
-            yield Fabricate(
+            yield Process(
                 station=station,
                 uses=[Part(what=money(), amount=-1)],
                 skills={},
