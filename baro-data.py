@@ -1,71 +1,67 @@
-import sys
-import re
-import os
 import json
-import logging
+import os
 import pathlib
+import re
+import sys
 from dataclasses import dataclass, is_dataclass, fields
-from lxml import etree
+from graphlib import TopologicalSorter
 from itertools import count
+from lxml import etree
 from operator import itemgetter
-from typing import Union, NewType
-
-
-logger = logging.getLogger(__name__)
+from typing import Union, NewType, TypeAlias, Callable, Generator, overload, TypeVar
 
 
 class ansi:
-    # if not sys.stderr.isatty() or 'NOCOLOR' in os.environ:
+    """256-color mode https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit"""
 
     class Color(object):
-        """256-color mode https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit"""
 
         reset = "\x1b[0m"
 
         def __init__(self, n):
             self.fg = f"\x1b[38;5;{n}m"
-            # self.bg = f"\x1b[48;5;{n}m"
 
-        def __call__(self, str):
-            return f"{self.fg}{str}{self.reset}"
+        if sys.stderr.isatty() and "NOCOLOR" not in os.environ:
 
-    dark_black = Color(0)
-    dark_red = Color(1)
-    dark_green = Color(2)
-    dark_yellow = Color(3)
-    dark_blue = Color(4)
-    dark_magenta = Color(5)
-    dark_teal = Color(6)
-    grey = Color(7)
-    dark_grey = Color(8)
-    red = Color(9)
-    green = Color(10)
-    yellow = Color(11)
+            def __call__(self, str):
+                return f"{self.fg}{str}{self.reset}"
+
+        else:
+
+            def __call__(self, str):
+                return str
+
     blue = Color(12)
     magenta = Color(13)
-    teal = Color(14)
-    white = Color(15)
 
 
 Identifier = NewType("Identifier", str)
+
 Tag = NewType("Tag", str)
+
 Money = NewType("Money", str)
+
+RequiredSkill: TypeAlias = dict[Identifier, float]
 
 
 def make_identifier(value: str) -> Identifier:
     if not value:
         raise ValueError(value)
-    return ":" + value
+    return Identifier(":" + value)
 
 
 def make_tag(value: str) -> Tag:
     if not value:
         raise ValueError(value)
-    return "#" + value
+    return Tag("#" + value)
+
+
+def split_tag_list(value: str) -> list[Tag]:
+    return [make_tag(s) for s in value.split(",") if s]
 
 
 def money() -> Money:
-    return "$"
+    return Money("$")
 
 
 def xmlbool(value: str) -> bool:
@@ -83,7 +79,7 @@ class Part(object):
 
     what: Union[Identifier, Tag, Money]
     # positive if fabrication produces this item, negative if it consumes it
-    amount: float
+    amount: int
     # condition (like health or quality) required to be consumed or to be
     # yielded? (CopyCondition and OutCondition{Min,Max} is used to specify
     # condition of outputs/yielded items)
@@ -103,7 +99,7 @@ class RandomChoices(object):
     """barotrauma seems to do weighted random with replacement ..."""
 
     weighted_random_with_replacement: list[Part]
-    amount: float
+    amount: int
 
 
 @dataclass
@@ -111,11 +107,11 @@ class Process(object):
     """Fabricate / Deconstruct / Price"""
 
     uses: list[Part | RandomChoices]
-    skills: dict[str, int]
+    skills: dict[Identifier, float]
     station: str
     time: float
     needs_recipe: bool = False
-    description: str = None
+    description: str | None = None
 
 
 class MissingAttribute(ValueError):
@@ -136,7 +132,19 @@ class Warning(object):
         self.kwargs = kwargs
 
 
-def warn_missing_attribute(*, element, attribute):
+@dataclass
+class NeedsVariantOf(object):
+    identifier: Identifier
+    variantof: Identifier
+
+
+@dataclass
+class Tagged(object):
+    identifier: Identifier
+    tags: list[Tag]
+
+
+def warn_missing_attribute(*, element: etree._Element, attribute):
     return Warning(
         "required attribute missing from element", attribute=attribute, element=element
     )
@@ -154,7 +162,6 @@ def log_warnings(it, path):
 
             for key, value in item.kwargs.items():
                 prefix = f"\t» {ansi.blue(key)} "
-                # indent = f"\t  {' ' * len(key)} "
                 value = format_log_value(value, path)
 
                 if "\n" in value:
@@ -209,17 +216,60 @@ def trim_asdict(value):
     }
 
 
-def extract_document(doc):
-    for item in doc.xpath("//Items/*"):
-        yield from extract_Item(item)
+@dataclass
+class BaroItem(object):
+    element: etree._Element
+    identifier: Identifier
+    variant_of: Identifier | None
+    tags: list[Tag]
+
+    @property
+    def is_variant(self):
+        return self.variant_of is not None
 
 
-def extract_Item(item):
-    # tags = (item.get('tags') or item.get('Tags') or '').split(',')
+def index_document(doc) -> Generator[BaroItem | Warning, None, None]:
+    root = doc.getroot()
+    element_tag = root.tag.lower()
 
-    if item.get("variantof") or item.get("inherit"):
-        return  # yield Warning("skipping variantof/inherit TODO", element=item)
+    if element_tag == "item":
+        items = [root]
 
+    elif element_tag == "items":
+        items = root
+
+    else:
+        return
+
+    for item in items:
+
+        # skip items with no identifier, we assume they contain no interesting
+        # information
+        if not item.get("identifier"):
+            if item.xpath("Fabricate or Deconstruct or Price"):
+                yield Warning(
+                    "element has no identifier but has something we care about",
+                    element=item,
+                )
+            continue
+
+        # there are a lot of attributes on these elements,
+        # we don't care to explicitly ignore them so don't
+        # yield from attrs.warnings()
+        attrs = Attribs.from_element(item)
+
+        yield BaroItem(
+            element=item,
+            identifier=attrs.use("identifier", convert=make_identifier),
+            tags=attrs.use("tags", convert=split_tag_list, default=[]),
+            variant_of=attrs.or_none("variantof", convert=make_identifier)
+            or attrs.or_none("inherit", convert=make_identifier),
+        )
+
+
+def extract_Item(
+    item,
+) -> Generator[Process | Warning, None, None]:
     for el in item.xpath("Fabricate"):
         try:
             yield from extract_Fabricate(el)
@@ -239,18 +289,19 @@ def extract_Item(item):
             yield err.warn()
 
 
-def extract_item_identifier(el):
-    identifier = el.get("identifier") or el.get("nameidentifier")
+def extract_item_identifier(el) -> Identifier:
+    # TODO nameidentifier is used for display, should probably be used no this way
+    identifier = el.get("identifier")  # or el.get("nameidentifier")
 
     if not identifier:
-        raise MissingAttribute(
-            dict(attribute=("identifier", "nameidentifier"), element=el)
-        )
+        raise MissingAttribute(dict(attribute="identifier", element=el))
 
     return make_identifier(identifier)
 
 
-def extract_Fabricate(el):
+def extract_Fabricate(
+    el,
+) -> Generator[Process | Warning, None, None]:
     # <Fabricate> is a child of <Item> or whatever. Our model is upside down
     # compared to Barotrauma. Our Fabricate has the item it outs output as a
     # child in `uses`.
@@ -268,7 +319,7 @@ def extract_Fabricate(el):
         uses=[
             Part(
                 what=extract_item_identifier(el.getparent()),
-                amount=attrs.use("amount", convert=float, default=1.0),
+                amount=attrs.use("amount", convert=int, default=1),
             )
         ],
         skills={},
@@ -290,7 +341,7 @@ def extract_Fabricate(el):
                 if isinstance(item, Part):
                     res.uses.append(item)
 
-                elif isinstance(item, dict):  # skill ...
+                elif isinstance(item, dict):  # RequiredSkill ...
                     res.skills.update(item)
 
                 else:
@@ -301,13 +352,17 @@ def extract_Fabricate(el):
     yield res
 
 
-def extract_Fabricate_Item(el):
+def extract_Fabricate_Item(
+    el,
+) -> Generator[RequiredSkill | Part | Warning, None, None]:
     attrs = Attribs.from_element(el)
 
-    if el.tag == "RequiredSkill":
-        yield {attrs.use("identifier"): attrs.use("level", convert=float)}
+    if el.tag.lower() == "requiredskill":
+        skill_identifier = attrs.use("identifier", convert=make_identifier)
+        skill_level = attrs.use("level", convert=float)
+        yield {skill_identifier: skill_level}
 
-    elif el.tag in ("RequiredItem", "Item"):
+    elif el.tag.lower() in ("requireditem", "item"):
         attrs.ignore("usecondition", "header", "defaultitem")
 
         what = attrs.or_none("identifier", convert=make_identifier)
@@ -319,8 +374,8 @@ def extract_Fabricate_Item(el):
         # this is an ingredient/required item. it is consumed
         # during fabrication, so the amount is negative
         amount = -(
-            attrs.or_none("amount", convert=float)
-            or attrs.use("count", convert=float, default=1)
+            attrs.or_none("amount", convert=int)
+            or attrs.use("count", convert=int, default=1)
         )
 
         yield Part(
@@ -340,7 +395,7 @@ def extract_Fabricate_Item(el):
         yield warn_unexpected_element(unexpected=child)
 
 
-def extract_Deconstruct(el):
+def extract_Deconstruct(el) -> Generator[Process | Warning, None, None]:
     attrs = Attribs.from_element(el)
 
     fab = Process(
@@ -420,7 +475,7 @@ def extract_Deconstruct(el):
     yield from attrs.warnings()
 
 
-def extract_Deconstruct_Item(el):
+def extract_Deconstruct_Item(el) -> Generator[Part | Warning, None, None]:
     attrs = Attribs.from_element(el)
     attrs.ignore(
         "commonness",
@@ -432,9 +487,9 @@ def extract_Deconstruct_Item(el):
         "infotextonotheritemmissing",
     )
 
-    if el.tag in (
-        "RequiredItem",  # not to be confused with requiredotheritem lulz
-        "Item",
+    if el.tag.lower() in (
+        "requireditem",  # not to be confused with requiredotheritem lulz
+        "item",
     ):
         # Deconstruction Items are yields, so positive amounts
         # mincondition maxcondition constrain whether that item qualifies to be
@@ -506,7 +561,7 @@ def extract_Deconstruct_Item(el):
     yield from attrs.warnings()
 
 
-def extract_Price(el):
+def extract_Price(el) -> Generator[Process | Warning, None, None]:
     attrs = Attribs.from_element(el)
 
     # canbespecial is for discounts or in demand i guess? could be interesting
@@ -531,7 +586,7 @@ def extract_Price(el):
 
     for child in el.xpath("*"):
 
-        if child.tag != "Price":
+        if child.tag.lower() != "price":
             yield warn_unexpected_element(unexpected=child)
             continue
 
@@ -557,10 +612,42 @@ def extract_Price(el):
         yield from attrs.warnings()
 
 
+def apply_variant(base: etree._Element, variant: etree._Element) -> etree._Element:
+    """
+    variantof is some sort of "inheritance" trash where some element can be a
+    variant of another and that element's definition is merged over that of the
+    thing it's a variant of.
+
+    mostly this copies the referenced element and then adds or replaces
+    existing attributes from the variant; working recursively by pairing child
+    elements by their tag name
+
+    some uh ... "features":
+
+    - some element attribute values are numbers prefixed with * or +, those are
+      added or multiplied with the existing value i guess but i don't think
+      this feature is used? so I'm ignoring it
+
+    - if an element in a variant has no children or attributes, it removes the
+      element instead of merging???
+
+    see BarotraumaShared/SharedSource/Prefabs/IImplementsVariants.cs
+    """
+    # base.attrib()
+    applied = etree.Element(variant.tag)
+    applied.attrib.update((k.lower(), v) for k, v in base.attrib.iteritems())
+    applied.attrib.update((k.lower(), v) for k, v in variant.attrib.iteritems())
+    breakpoint()
+    return applied
+
+
 class Attribs(dict):
+    __element: etree._Element
+    __missing: list[str]
+
     @classmethod
-    def from_element(cls, element):
-        self = cls(element.attrib.iteritems())
+    def from_element(cls, element) -> "Attribs":
+        self = cls(((k.lower(), v) for k, v in element.attrib.iteritems()))
         self.__element = element
         self.__missing = []
         return self
@@ -577,6 +664,16 @@ class Attribs(dict):
     def ignore(self, *attributes):
         for a in attributes:
             self.pop(a, None)
+
+    T = TypeVar("T")
+
+    @overload
+    def use(self, attribute, *, convert: Callable[[str], T], default=__raise) -> T:
+        pass
+
+    @overload
+    def use(self, attribute, *, convert=None, default=__raise) -> str:
+        pass
 
     def use(self, attribute, *, convert=None, default=__raise):
         value = self.pop(attribute, self.__attribute_not_found)
@@ -609,7 +706,7 @@ class Attribs(dict):
         if self:
             raise UnexpectedElement(self)
 
-    def warnings(self):
+    def warnings(self) -> Generator[Warning, None, None]:
         if self:
             yield Warning(
                 "attributes on element were not used",
@@ -640,30 +737,42 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG)
-
-    # ns = etree.FunctionNamespace(None)
-
-    # @ns
-    # def lower(context, a):
-    #     print(args)
-    #     breakpoint()
-    #     pass
-
-    items = []
+    index: dict[Identifier, BaroItem] = {}
+    processes: list[Process] = []
 
     for path in rglobpaths(args.paths, "*.xml"):
         try:
             with path.open() as file:
                 doc = etree.parse(file)
-        except OsError as err:
-            logger.warning("%s: %s", path, err)
+        except OSError as err:
+            print("uh oh %s: %s", path, err, file=sys.stderr)
             continue
         else:
-            items.extend(log_warnings(extract_document(doc), path=path))
+            for item in log_warnings(index_document(doc), path=path):
+                index[item.identifier] = item
+
+    for item in index.values():
+        if not item.is_variant:
+            processes.extend(log_warnings(extract_Item(item.element), path=path))
+
+    # TODO check variations where we don't know about the variant_of?
+
+    graph = {
+        item.identifier: {item.variant_of} for item in index.values() if item.is_variant
+    }
+    for identifier in TopologicalSorter(graph).static_order():
+        item = index[identifier]
+
+        if not item.is_variant:
+            continue
+
+        variant_of = index[item.variant_of]
+
+        wow = apply_variant(variant_of.element, item.element)
+        print(etree.tostring(wow).decode())
 
     if not args.dry_run:
         try:
-            json.dump(items, default=serialize_dataclass, fp=sys.stdout)
+            json.dump([], default=serialize_dataclass, fp=sys.stdout)
         except BrokenPipeError:
             pass
