@@ -83,6 +83,10 @@ def split_tag_list(value: str) -> list[Tag]:
     return [make_tag(s) for s in value.split(",") if s]
 
 
+def split_station_list(value: str) -> list[str]:
+    return value.split(",")
+
+
 def money() -> Money:
     return Money("$")
 
@@ -131,28 +135,10 @@ class Process(object):
 
     uses: list[Part | RandomChoices]
     skills: dict[Identifier, float]
-    station: str
+    stations: list[str]
     time: float
     needs_recipe: bool = False
     description: str | None = None
-
-
-class MissingAttribute(ValueError):
-    def warn(self):
-        (args,) = self.args
-        return warn_missing_attribute(**args)
-
-
-# def warn_on_error(it):
-#     try:
-#     except MissingAttribute as err:
-#         yield err.warn()
-
-
-class Warning(object):
-    def __init__(self, message="", **kwargs):
-        self.message = message
-        self.kwargs = kwargs
 
 
 @dataclass
@@ -165,6 +151,18 @@ class NeedsVariantOf(object):
 class Tagged(object):
     identifier: Identifier
     tags: list[Tag]
+
+
+class MissingAttribute(ValueError):
+    def warn(self):
+        (args,) = self.args
+        return warn_missing_attribute(**args)
+
+
+class Warning(object):
+    def __init__(self, message="", **kwargs):
+        self.message = message
+        self.kwargs = kwargs
 
 
 def warn_missing_attribute(*, element: etree._Element, attribute):
@@ -180,20 +178,22 @@ def warn_unexpected_element(*, unexpected):
 def log_warnings(it, *, path=None):
     for item in it:
         if isinstance(item, Warning):
-
-            print(ansi.magenta(item.message), file=sys.stderr)
-
-            for key, value in item.kwargs.items():
-                prefix = f"\t» {ansi.blue(key)} "
-                value = format_log_value(value, path)
-
-                if "\n" in value:
-                    print(f"{prefix}...\n{value}", file=sys.stderr)
-                else:
-                    print(f"{prefix}{value}", file=sys.stderr)
-
+            log_warning(item.message, **item.kwargs)
         else:
             yield item
+
+
+def log_warning(message, **kwargs):
+    print(ansi.magenta(item.message), file=sys.stderr)
+
+    for key, value in item.kwargs.items():
+        prefix = f"\t» {ansi.blue(key)} "
+        value = format_log_value(value, path)
+
+        if "\n" in value:
+            print(f"{prefix}...\n{value}", file=sys.stderr)
+        else:
+            print(f"{prefix}{value}", file=sys.stderr)
 
 
 def format_log_value(v, path):
@@ -250,7 +250,7 @@ class BaroItem(object):
     tags: list[Tag]
 
     @property
-    def is_variant(self):
+    def is_variant(self) -> bool:
         return self.variant_of is not None
 
 
@@ -300,13 +300,13 @@ def extract_Item(
         tag = el.tag.lower()
 
         try:
-            if tag == 'fabricate':
+            if tag == "fabricate":
                 yield from extract_Fabricate(el)
 
-            elif tag == 'deconstruct':
+            elif tag == "deconstruct":
                 yield from extract_Deconstruct(el)
 
-            elif tag == 'price':
+            elif tag == "price":
                 yield from extract_Price(el)
         except MissingAttribute as err:
             yield err.warn()
@@ -346,7 +346,7 @@ def extract_Fabricate(
             )
         ],
         skills={},
-        station=attrs.use("suitablefabricators"),
+        stations=attrs.use("suitablefabricators",convert=split_station_list),
         time=attrs.use("requiredtime", convert=float, default=1.0),
         needs_recipe=attrs.use("requiresrecipe", default=False, convert=xmlbool),
         description=attrs.opt("displayname"),
@@ -431,7 +431,7 @@ def extract_Deconstruct(el) -> Generator[Process | Warning, None, None]:
         ],
         skills={},
         time=attrs.use("time", convert=float, default=1.0),
-        station=attrs.use("requireddeconstructor", default="deconstructor"),
+        stations=attrs.use("requireddeconstructor", default=["deconstructor"], convert=split_station_list),
     )
 
     if attrs.use("chooserandom", convert=xmlbool, default=False):
@@ -627,11 +627,11 @@ def extract_Price(el) -> Generator[Process | Warning, None, None]:
             "minleveldifficulty",
         )
 
-        station = attrs.use("storeidentifier")
+        stations = attrs.use("storeidentifier", convert=split_station_list)
 
         if attrs.use("sold", convert=xmlbool, default=is_sold_by_store_generally):
             yield Process(
-                station=station,
+                stations=stations,
                 uses=[Part(what=money(), amount=-1)],
                 skills={},
                 time=0,
@@ -821,12 +821,22 @@ if __name__ == "__main__":
             for item in log_warnings(index_document(doc), path=path):
                 index[item.identifier] = item
 
-    # TODO check variations where we don't know about the variant_of?
-
     logtime("loading variants")
 
+    # remove variations where we don't know about the variant_of?
+    for identifier, item in index.items():
+        if item.is_variant and item.variant_of not in index:
+            log_warning(
+                ansi.magenta("item variant_of not in index"),
+                element=item.element,
+                variant_of=item.variant_of,
+            )
+            del index[identifier]
+
     graph = {
-        item.identifier: {item.variant_of} for item in index.values() if item.is_variant
+        identifier: {item.variant_of}
+        for identifier, item in index.items()
+        if item.variant_of is not None
     }
     for identifier in TopologicalSorter(graph).static_order():
         if identifier is None:
@@ -853,12 +863,16 @@ if __name__ == "__main__":
     for item in index.values():
         processes.extend(log_warnings(extract_Item(item.element)))
 
-    logtime(f"found {len(processes)} Process")
+    logtime(f"found {len(processes)} Process for {len(index)} items")
 
     if not args.dry_run:
         logtime("dumping json")
+        dumpme = {
+            "tags": {identifier: item.tags for identifier, item in index.items()},
+            "fabs": processes,
+        }
         try:
-            json.dump([], default=serialize_dataclass, fp=sys.stdout)
+            json.dump(dumpme, default=serialize_dataclass, fp=sys.stdout)
         except BrokenPipeError:
             pass
 
