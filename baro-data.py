@@ -3,12 +3,14 @@ import os
 import pathlib
 import re
 import sys
+from copy import copy
 from dataclasses import dataclass, is_dataclass, fields
 from graphlib import TopologicalSorter
 from itertools import count
 from lxml import etree
 from operator import itemgetter
 from typing import Union, NewType, TypeAlias, Callable, Generator, overload, TypeVar
+from time import monotonic_ns
 
 
 class ansi:
@@ -33,6 +35,27 @@ class ansi:
 
     blue = Color(12)
     magenta = Color(13)
+
+
+_LAST_TIME = None
+
+
+def skip_comments(el: etree._Element) -> Generator[etree._Element, None, None]:
+    return (child for child in el if child.tag is not etree.Comment)
+
+
+def logtime(message):
+    global _LAST_TIME
+
+    if _LAST_TIME is None:
+        d = 0.0
+    else:
+        d = (monotonic_ns() - _LAST_TIME) / 1e6
+
+    prefix = ansi.blue(f"{d: 8.3f}ms")
+    print(f"{prefix} » {message}", file=sys.stderr)
+
+    _LAST_TIME = monotonic_ns()
 
 
 Identifier = NewType("Identifier", str)
@@ -154,7 +177,7 @@ def warn_unexpected_element(*, unexpected):
     return Warning("unexpected element", unexpected=unexpected)
 
 
-def log_warnings(it, path):
+def log_warnings(it, *, path=None):
     for item in it:
         if isinstance(item, Warning):
 
@@ -180,6 +203,9 @@ def format_log_value(v, path):
 
         if not lines:
             return ""
+
+        if v.sourceline is None or path is None:
+            return "".join(lines)
 
         [head, *tail] = lines
         lines = [head] + _dedent_strings(tail)
@@ -270,21 +296,18 @@ def index_document(doc) -> Generator[BaroItem | Warning, None, None]:
 def extract_Item(
     item,
 ) -> Generator[Process | Warning, None, None]:
-    for el in item.xpath("Fabricate"):
-        try:
-            yield from extract_Fabricate(el)
-        except MissingAttribute as err:
-            yield err.warn()
+    for el in skip_comments(item):
+        tag = el.tag.lower()
 
-    for el in item.xpath("Deconstruct"):
         try:
-            yield from extract_Deconstruct(el)
-        except MissingAttribute as err:
-            yield err.warn()
+            if tag == 'fabricate':
+                yield from extract_Fabricate(el)
 
-    for el in item.xpath("Price"):
-        try:
-            yield from extract_Price(el)
+            elif tag == 'deconstruct':
+                yield from extract_Deconstruct(el)
+
+            elif tag == 'price':
+                yield from extract_Price(el)
         except MissingAttribute as err:
             yield err.warn()
 
@@ -485,6 +508,11 @@ def extract_Deconstruct_Item(el) -> Generator[Part | Warning, None, None]:
         "activatebuttontext",
         "infotext",
         "infotextonotheritemmissing",
+        # saw multiplier once Items/Genetic/genetic.xml:224 dunno what it means
+        #   <Item name="" identifier="geneticmaterialhusk" variantof="geneticmaterialcrawler" nameidentifier="geneticmaterial">
+        #     <Deconstruct>
+        #       <Item identifier="geneticmaterialhusk" multiplier="5" />
+        "multiplier",
     )
 
     if el.tag.lower() in (
@@ -612,8 +640,11 @@ def extract_Price(el) -> Generator[Process | Warning, None, None]:
         yield from attrs.warnings()
 
 
-def apply_variant(base: etree._Element, variant: etree._Element) -> etree._Element:
-    """
+def apply_variant(
+    base: etree._Element, variant: etree._Element, only_tags=()
+) -> etree._Element:
+    """Given <variant variantof=base>, apply variant over top of base, returning a new element.
+
     variantof is some sort of "inheritance" trash where some element can be a
     variant of another and that element's definition is merged over that of the
     thing it's a variant of.
@@ -633,11 +664,47 @@ def apply_variant(base: etree._Element, variant: etree._Element) -> etree._Eleme
 
     see BarotraumaShared/SharedSource/Prefabs/IImplementsVariants.cs
     """
-    # base.attrib()
     applied = etree.Element(variant.tag)
-    applied.attrib.update((k.lower(), v) for k, v in base.attrib.iteritems())
-    applied.attrib.update((k.lower(), v) for k, v in variant.attrib.iteritems())
-    breakpoint()
+    applied.sourceline = variant.sourceline  # TODO kind of a lie ?
+    # mypy upset that we're passing a generator???
+    applied.attrib.update((k.lower(), v) for k, v in base.attrib.iteritems())  # type: ignore
+    applied.attrib.update((k.lower(), v) for k, v in variant.attrib.iteritems())  # type: ignore
+    # lxml typings are really on strong stuff
+    applied.attrib.pop("variantof", None)  # type: ignore
+    applied.attrib.pop("inherit", None)  # type: ignore
+
+    variant_children: list[etree._Element | None] = list(skip_comments(variant))
+
+    # seems to be a funny special case where <Clear/> is used to produce an
+    # element with no children from either the base or the variant
+    if any(c.tag.lower() == "clear" for c in variant_children):  # type: ignore
+        return applied
+
+    for base_child in skip_comments(base):
+
+        child_tag = base_child.tag.lower()
+
+        # optimization, allow ault
+        if only_tags and child_tag not in only_tags:
+            continue
+
+        for i, variant_child in enumerate(variant_children):
+            if variant_child is not None and child_tag == variant_child.tag.lower():
+                variant_children[i] = None
+
+                # if the variant element has no attributes or children, this
+                # "removes" the element instead of merging it with the include
+                # the pair from the base element
+                if variant_child.attrib or len(variant_child):
+                    applied.append(apply_variant(base_child, variant_child))
+
+                break
+
+        else:
+            applied.append(copy(base_child))
+
+    applied.extend(c for c in variant_children if c is not None)
+
     return applied
 
 
@@ -737,8 +804,11 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # load every xml file and build an index
+
+    logtime("building index")
+
     index: dict[Identifier, BaroItem] = {}
-    processes: list[Process] = []
 
     for path in rglobpaths(args.paths, "*.xml"):
         try:
@@ -751,16 +821,18 @@ if __name__ == "__main__":
             for item in log_warnings(index_document(doc), path=path):
                 index[item.identifier] = item
 
-    for item in index.values():
-        if not item.is_variant:
-            processes.extend(log_warnings(extract_Item(item.element), path=path))
-
     # TODO check variations where we don't know about the variant_of?
+
+    logtime("loading variants")
 
     graph = {
         item.identifier: {item.variant_of} for item in index.values() if item.is_variant
     }
     for identifier in TopologicalSorter(graph).static_order():
+        if identifier is None:
+            # don't how this happens but mypy thinks it can so whatever
+            continue
+
         item = index[identifier]
 
         if not item.is_variant:
@@ -768,11 +840,26 @@ if __name__ == "__main__":
 
         variant_of = index[item.variant_of]
 
-        wow = apply_variant(variant_of.element, item.element)
-        print(etree.tostring(wow).decode())
+        item.element = apply_variant(
+            variant_of.element,
+            item.element,
+            only_tags=("fabricate", "deconstruct", "price"),
+        )
+
+    logtime("reading information from items")
+
+    processes: list[Process] = []
+
+    for item in index.values():
+        processes.extend(log_warnings(extract_Item(item.element)))
+
+    logtime(f"found {len(processes)} Process")
 
     if not args.dry_run:
+        logtime("dumping json")
         try:
             json.dump([], default=serialize_dataclass, fp=sys.stdout)
         except BrokenPipeError:
             pass
+
+    logtime("woo hoo!")
