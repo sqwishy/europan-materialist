@@ -4,12 +4,22 @@ import pathlib
 import re
 import sys
 from copy import copy
-from dataclasses import dataclass, is_dataclass, fields
+from dataclasses import dataclass, is_dataclass, fields, field
 from graphlib import TopologicalSorter
 from itertools import count
 from lxml import etree
 from operator import itemgetter
-from typing import Union, NewType, TypeAlias, Callable, Generator, overload, TypeVar
+from typing import (
+    Union,
+    NewType,
+    TypeAlias,
+    Callable,
+    Iterator,
+    Generator,
+    overload,
+    TypeVar,
+)
+from types import MappingProxyType
 from time import monotonic_ns
 
 
@@ -120,6 +130,17 @@ class Part(object):
     def is_consumed(self):
         return self.amount < 0
 
+    def can_combine(self, other: "Part") -> bool:
+        """combine amounts for the same part in the same direction"""
+        return (
+            self.what == other.what
+            and self.condition == other.condition
+            and sign(self.amount) == sign(other.amount)
+        )
+
+    def combine_in_place(self, other: "Part"):
+        self.amount += other.amount
+
 
 @dataclass
 class RandomChoices(object):
@@ -134,9 +155,9 @@ class Process(object):
     """Fabricate / Deconstruct / Price"""
 
     uses: list[Part | RandomChoices]
-    skills: dict[Identifier, float]
     stations: list[str]
-    time: float
+    skills: dict[Identifier, float]
+    time: float = 0.0
     needs_recipe: bool = False
     description: str | None = None
 
@@ -346,7 +367,7 @@ def extract_Fabricate(
             )
         ],
         skills={},
-        stations=attrs.use("suitablefabricators",convert=split_station_list),
+        stations=attrs.use("suitablefabricators", convert=split_station_list),
         time=attrs.use("requiredtime", convert=float, default=1.0),
         needs_recipe=attrs.use("requiresrecipe", default=False, convert=xmlbool),
         description=attrs.opt("displayname"),
@@ -422,16 +443,14 @@ def extract_Deconstruct(el) -> Generator[Process | Warning, None, None]:
     attrs = Attribs.from_element(el)
 
     fab = Process(
-        uses=[
-            Part(
-                what=extract_item_identifier(el.getparent()),
-                amount=-1,
-                # name=attrs.opt("displayname"),
-            )
-        ],
+        uses=[Part(what=extract_item_identifier(el.getparent()), amount=-1)],
         skills={},
         time=attrs.use("time", convert=float, default=1.0),
-        stations=attrs.use("requireddeconstructor", default=["deconstructor"], convert=split_station_list),
+        stations=attrs.use(
+            "requireddeconstructor",
+            default=["deconstructor"],
+            convert=split_station_list,
+        ),
     )
 
     if attrs.use("chooserandom", convert=xmlbool, default=False):
@@ -608,7 +627,7 @@ def extract_Price(el) -> Generator[Process | Warning, None, None]:
     # price = attrs.use("baseprice", convert=float, default=0.0)
     # multiplier = attrs.use("multiplier", convert=float, default=1.0)
 
-    is_sold_by_store_generally = attrs.use("sold", convert=xmlbool, default=True)
+    is_sold_by_stores_generally = attrs.use("sold", convert=xmlbool, default=True)
 
     yield from attrs.warnings()
 
@@ -629,12 +648,14 @@ def extract_Price(el) -> Generator[Process | Warning, None, None]:
 
         stations = attrs.use("storeidentifier", convert=split_station_list)
 
-        if attrs.use("sold", convert=xmlbool, default=is_sold_by_store_generally):
+        if attrs.use("sold", convert=xmlbool, default=is_sold_by_stores_generally):
             yield Process(
                 stations=stations,
-                uses=[Part(what=money(), amount=-1)],
+                uses=[
+                    Part(what=money(), amount=-1),
+                    Part(what=extract_item_identifier(el.getparent()), amount=1),
+                ],
                 skills={},
-                time=0,
             )
 
         yield from attrs.warnings()
@@ -787,7 +808,22 @@ class Attribs(dict):
             )
 
 
-def rglobpaths(paths, glob):
+T = TypeVar("T")
+
+
+def enumerate_rev(l: list[T]) -> Iterator[tuple[int, T]]:
+    """
+    >>> list(enumerate_rev(['foo', 1, True]))
+    [(2, True), (1, 1), (0, 'foo')]
+    """
+    return zip(count(len(l) - 1, -1), reversed(l))
+
+
+def sign(i: int):
+    return 1 if i >= 0 else -1
+
+
+def rglobpaths(paths: list[str], glob: str):
     for path in map(pathlib.Path, args.paths):
         if path.is_file():
             yield path
@@ -799,7 +835,7 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser = ArgumentParser()
-    parser.add_argument("paths")
+    parser.add_argument("paths", nargs="+")
     parser.add_argument("-n", "--dry-run", action="store_true", default=False)
 
     args = parser.parse_args()
@@ -812,6 +848,7 @@ if __name__ == "__main__":
 
     for path in rglobpaths(args.paths, "*.xml"):
         try:
+            # logtime(f"read {path}")
             with path.open() as file:
                 doc = etree.parse(file)
         except OSError as err:
@@ -863,13 +900,33 @@ if __name__ == "__main__":
     for item in index.values():
         processes.extend(log_warnings(extract_Item(item.element)))
 
+    logtime(f"abbreviating")
+
+    for process in processes:
+
+        for i, part in enumerate_rev(process.uses[:-1]):
+
+            if isinstance(part, RandomChoices):
+                continue
+
+            for j, other in enumerate_rev(process.uses[i + 1 :]):
+
+                if isinstance(other, RandomChoices):
+                    continue
+
+                if part.can_combine(other):
+                    part.combine_in_place(other)
+                    del process.uses[i + 1 + j]
+
     logtime(f"found {len(processes)} Process for {len(index)} items")
 
     if not args.dry_run:
         logtime("dumping json")
         dumpme = {
-            "tags": {identifier: item.tags for identifier, item in index.items()},
-            "fabs": processes,
+            "tags": {
+                identifier: item.tags for identifier, item in index.items() if item.tags
+            },
+            "procs": processes,
         }
         try:
             json.dump(dumpme, default=serialize_dataclass, fp=sys.stdout)
