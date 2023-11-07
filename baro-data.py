@@ -1,12 +1,14 @@
+import io
 import json
 import os
 import pathlib
 import re
 import sys
+from base64 import b64encode
 from copy import copy
 from dataclasses import dataclass, is_dataclass, fields, field
 from graphlib import TopologicalSorter
-from itertools import count
+from itertools import count, chain
 from lxml import etree
 from operator import itemgetter
 from typing import (
@@ -97,6 +99,16 @@ def split_station_list(value: str) -> list[str]:
     return value.split(",")
 
 
+def split_ltwh(value: str) -> tuple[int, int, int, int]:
+    (a, s, d, f) = [int(v.strip()) for v in value.split(",", maxsplit=4)]
+    return (a, s, d, f)
+
+
+def split_int_pair(value: str) -> tuple[int, int]:
+    (a, s) = [int(v.strip()) for v in value.split(",", maxsplit=2)]
+    return (a, s)
+
+
 def money() -> Money:
     return Money("$")
 
@@ -174,10 +186,16 @@ class Tagged(object):
     tags: list[Tag]
 
 
-class MissingAttribute(ValueError):
-    def warn(self):
+class MissingAttribute(Exception):
+    def as_warning(self) -> Warning:
         (args,) = self.args
         return warn_missing_attribute(**args)
+
+
+class BadValue(Exception):
+    def as_warning(self) -> Warning:
+        (args,) = self.args
+        return warn_bad_value(**args)
 
 
 class Warning(object):
@@ -196,6 +214,12 @@ def warn_unexpected_element(*, unexpected):
     return Warning("unexpected element", unexpected=unexpected)
 
 
+def warn_bad_value(*, error, attribute, element):
+    return Warning(
+        "bad attribute value", error=error, attribute=attribute, element=element
+    )
+
+
 def log_warnings(it, *, path=None):
     for item in it:
         if isinstance(item, Warning):
@@ -205,9 +229,9 @@ def log_warnings(it, *, path=None):
 
 
 def log_warning(message, **kwargs):
-    print(ansi.magenta(item.message), file=sys.stderr)
+    print(ansi.magenta(message), file=sys.stderr)
 
-    for key, value in item.kwargs.items():
+    for key, value in kwargs.items():
         prefix = f"\t» {ansi.blue(key)} "
         value = format_log_value(value, path)
 
@@ -237,6 +261,9 @@ def format_log_value(v, path):
             for no, line in zip(count(v.sourceline), lines)
         )
 
+    elif is_dataclass(v):
+        return repr(v)
+
     else:
         return v
 
@@ -264,11 +291,18 @@ def trim_asdict(value):
 
 
 @dataclass
+class Sprite(object):
+    texture: str
+    ltwh: tuple[int, int, int, int]
+
+
+@dataclass
 class BaroItem(object):
     element: etree._Element
     identifier: Identifier
     variant_of: Identifier | None
     tags: list[Tag]
+    sprite: Sprite | None
 
     @property
     def is_variant(self) -> bool:
@@ -300,6 +334,20 @@ def index_document(doc) -> Generator[BaroItem | Warning, None, None]:
                 )
             continue
 
+        found_sprite = None
+        for sprite_el in item.xpath("Sprite"):
+            if found_sprite is not None:
+                log_warning(
+                    "found multiple Sprite elements, only using one", element=item
+                )
+                break
+            for something in extract_Sprite(sprite_el):
+                if isinstance(something, Sprite):
+                    found_sprite = something
+                    break
+                else:
+                    yield something
+
         # there are a lot of attributes on these elements,
         # we don't care to explicitly ignore them so don't
         # yield from attrs.warnings()
@@ -311,7 +359,31 @@ def index_document(doc) -> Generator[BaroItem | Warning, None, None]:
             tags=attrs.use("tags", convert=split_tag_list, default=[]),
             variant_of=attrs.or_none("variantof", convert=make_identifier)
             or attrs.or_none("inherit", convert=make_identifier),
+            sprite=found_sprite,
         )
+
+
+def extract_Sprite(el):
+    attrs = Attribs.from_element(el)
+
+    try:
+        # fmt: off
+        if     (sheetindex := attrs.or_none("sheetindex", convert=split_int_pair)) \
+           and (sheetelementsize := attrs.or_none("sheetelementsize", convert=split_int_pair)):
+            (col, row) = sheetindex
+            (w, h) = sheetelementsize
+            ltwh = (w * col, row * h, w, h)
+
+        else:
+            ltwh = attrs.or_none("sourcerect", convert=split_ltwh) \
+                or attrs.use("source", convert=split_ltwh)
+        # fmt: on
+
+        yield Sprite(texture=attrs.use("texture"), ltwh=ltwh)
+    except MissingAttribute as err:
+        yield err.as_warning()
+    except BadValue as err:
+        yield err.as_warning()
 
 
 def extract_Item(
@@ -327,10 +399,10 @@ def extract_Item(
             elif tag == "deconstruct":
                 yield from extract_Deconstruct(el)
 
-            elif tag == "price":
-                yield from extract_Price(el)
+            # elif tag == "price":
+            #     yield from extract_Price(el)
         except MissingAttribute as err:
-            yield err.warn()
+            yield err.as_warning()
 
 
 def extract_item_identifier(el) -> Identifier:
@@ -373,9 +445,9 @@ def extract_Fabricate(
         description=attrs.opt("displayname"),
     )
 
-    requiredmoney = attrs.opt("requiredmoney")
-    if requiredmoney:
-        res.uses.append(Part(what=money(), amount=requiredmoney))
+    requiredmoney = attrs.opt("requiredmoney", convert=int)
+    if requiredmoney:  # probably buying from a vending machine
+        res.uses.append(Part(what=money(), amount=-requiredmoney))
 
     yield from attrs.warnings()
 
@@ -391,7 +463,7 @@ def extract_Fabricate(
                 else:
                     yield item
         except MissingAttribute as err:
-            yield err.warn()
+            yield err.as_warning()
 
     yield res
 
@@ -510,7 +582,7 @@ def extract_Deconstruct(el) -> Generator[Process | Warning, None, None]:
                 else:
                     yield item
         except MissingAttribute as err:
-            yield err.warn()
+            yield err.as_warning()
 
     yield fab
 
@@ -666,11 +738,11 @@ def apply_variant(
 ) -> etree._Element:
     """Given <variant variantof=base>, apply variant over top of base, returning a new element.
 
-    variantof is some sort of "inheritance" trash where some element can be a
-    variant of another and that element's definition is merged over that of the
-    thing it's a variant of.
+    variantof is some sort of "inheritance" or reuse gimick where some element
+    can be a variant of another and that element's definition is merged over
+    that of the thing it's a variant of.
 
-    mostly this copies the referenced element and then adds or replaces
+    mostly, the game copies the referenced element and then adds or replaces
     existing attributes from the variant; working recursively by pairing child
     elements by their tag name
 
@@ -683,6 +755,8 @@ def apply_variant(
     - if an element in a variant has no children or attributes, it removes the
       element instead of merging???
 
+    - encounering the <Clear/> element in the variant removes all children
+
     see BarotraumaShared/SharedSource/Prefabs/IImplementsVariants.cs
     """
     applied = etree.Element(variant.tag)
@@ -690,7 +764,7 @@ def apply_variant(
     # mypy upset that we're passing a generator???
     applied.attrib.update((k.lower(), v) for k, v in base.attrib.iteritems())  # type: ignore
     applied.attrib.update((k.lower(), v) for k, v in variant.attrib.iteritems())  # type: ignore
-    # lxml typings are really on strong stuff
+    # lxml typings need to calm down
     applied.attrib.pop("variantof", None)  # type: ignore
     applied.attrib.pop("inherit", None)  # type: ignore
 
@@ -705,7 +779,8 @@ def apply_variant(
 
         child_tag = base_child.tag.lower()
 
-        # optimization, allow ault
+        # optimization, sometimes only merge elements if their tag matches
+        # something the caller cares about
         if only_tags and child_tag not in only_tags:
             continue
 
@@ -714,8 +789,8 @@ def apply_variant(
                 variant_children[i] = None
 
                 # if the variant element has no attributes or children, this
-                # "removes" the element instead of merging it with the include
-                # the pair from the base element
+                # omits the element in the output instead of merging the
+                # element pair
                 if variant_child.attrib or len(variant_child):
                     applied.append(apply_variant(base_child, variant_child))
 
@@ -727,6 +802,11 @@ def apply_variant(
     applied.extend(c for c in variant_children if c is not None)
 
     return applied
+
+
+def drop_prefix(text, prefix):
+    if text.startswith(prefix):
+        return text[len(prefix) :]
 
 
 class Attribs(dict):
@@ -781,7 +861,12 @@ class Attribs(dict):
                 return default
 
         if convert is not None:
-            value = convert(value)
+            try:
+                value = convert(value)
+            except ValueError as err:
+                raise BadValue(
+                    error=err, attribute=attribute, element=self.__element
+                ) from err
 
         return value
 
@@ -824,18 +909,99 @@ def sign(i: int):
 
 
 def rglobpaths(paths: list[str], glob: str):
-    for path in map(pathlib.Path, args.paths):
+    for path in map(pathlib.Path, paths):
         if path.is_file():
             yield path
         else:
             yield from path.rglob(glob)
 
 
+def find_file(root: pathlib.Path, path: pathlib.Path):
+    """case insensitive file lookup
+
+    path is assumed to be relative to root and falls back to broader search
+    """
+    idk = root / path
+    if idk.exists():
+        return idk
+    print(root, path)
+    breakpoint()
+
+
+_path_cache: dict[str, dict[str, pathlib.Path]] = {}
+
+
+def find_texture_path_on_fs(content: pathlib.Path, texture: str):
+    """root should be a path to barotrauma's Content directory"""
+    # - this pretty much has to be case-insensitive ...
+    # - texture paths may be relative to the directory containing barotrauma's
+    #   Content directory, so drop that prefix if we find it
+
+    # TODO do something about preventing symlinks or paths leaving the
+    # args.content root via .. or whatever
+
+    # fmt: off
+    suffix = pathlib.Path(texture).suffix
+    texture = texture.lower()
+    texture = drop_prefix(texture, "content/") \
+           or drop_prefix(texture, "content\\") \
+           or texture
+    # fmt: on
+
+    haystack = _path_cache.get(suffix)
+    if haystack is None:
+        haystack = _path_cache[suffix] = {
+            str(p).lower(): p for p in content.rglob(f"*{suffix}")
+        }
+
+    for nocasepath, fspath in haystack.items():
+        if nocasepath.endswith(texture):
+            return fspath
+
+
+def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    (l, t, w, h) = ltwh
+    return (l, t, l + w, t + h)
+
+
+_sprite_cache: dict[pathlib.Path] = {}
+
+
+def sprite_to_base64(path, ltwh):
+    from PIL import Image
+
+    image = _sprite_cache.get(path)
+    if image is None:
+        image = _sprite_cache[path] = Image.open(path)
+
+    buf = io.BytesIO()
+
+    thumb = image.crop(ltwh_to_ltbr(ltwh)).copy()
+    thumb.thumbnail((96, 96))
+    thumb.save(buf, format="webp")
+
+    return b64encode(buf.getvalue()).decode()
+
+
+def load_xml_rglob(paths: list[str], glob: str):
+    for path in rglobpaths(paths, glob):
+        try:
+            with path.open() as file:
+                doc = etree.parse(file)
+        except OSError as err:
+            print("uh oh %s: %s", path, err, file=sys.stderr)
+            continue
+        else:
+            yield path, doc
+
+
 if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser = ArgumentParser()
-    parser.add_argument("paths", nargs="+")
+    parser.add_argument("--items", nargs="+")
+    parser.add_argument("--texts", nargs="+")
+    parser.add_argument("--sprites", type=pathlib.Path)
     parser.add_argument("-n", "--dry-run", action="store_true", default=False)
 
     args = parser.parse_args()
@@ -846,29 +1012,21 @@ if __name__ == "__main__":
 
     index: dict[Identifier, BaroItem] = {}
 
-    for path in rglobpaths(args.paths, "*.xml"):
-        try:
-            # logtime(f"read {path}")
-            with path.open() as file:
-                doc = etree.parse(file)
-        except OSError as err:
-            print("uh oh %s: %s", path, err, file=sys.stderr)
-            continue
-        else:
-            for item in log_warnings(index_document(doc), path=path):
-                index[item.identifier] = item
+    for path, doc in load_xml_rglob(args.items, "*.xml"):
+        for item in log_warnings(index_document(doc), path=path):
+            index[item.identifier] = item
 
     logtime("loading variants")
 
     # remove variations where we don't know about the variant_of?
-    for identifier, item in index.items():
+    for item in list(index.values()):
         if item.is_variant and item.variant_of not in index:
             log_warning(
                 ansi.magenta("item variant_of not in index"),
                 element=item.element,
                 variant_of=item.variant_of,
             )
-            del index[identifier]
+            del index[item.identifier]
 
     graph = {
         identifier: {item.variant_of}
@@ -893,16 +1051,38 @@ if __name__ == "__main__":
             only_tags=("fabricate", "deconstruct", "price"),
         )
 
-    logtime("reading information from items")
+    logtime("reading sprites")
+
+    sprites: dict[Identifier, str] = {}
+
+    if args.sprites:
+        for item in index.values():
+            sprite = item.sprite
+
+            if sprite is None:
+                continue
+
+            texture_path = find_texture_path_on_fs(args.sprites, sprite.texture)
+            if texture_path is None:
+                log_warning(
+                    "texture not found", path=sprite.texture, identifier=item.identifier
+                )
+                continue
+
+            sprites[item.identifier] = sprite_to_base64(texture_path, sprite.ltwh)
+
+    logtime("reading processes from items")
 
     processes: list[Process] = []
 
     for item in index.values():
         processes.extend(log_warnings(extract_Item(item.element)))
 
-    logtime(f"abbreviating")
+    logtime(f"tidying/abbreviating")
 
     for process in processes:
+
+        process.uses.sort(key=lambda p: p.amount)
 
         for i, part in enumerate_rev(process.uses[:-1]):
 
@@ -920,13 +1100,57 @@ if __name__ == "__main__":
 
     logtime(f"found {len(processes)} Process for {len(index)} items")
 
+    logtime(f"i18n")
+
+    tags_to_localize = set(chain.from_iterable(item.tags for item in index.values()))
+    i18n: dict[str, dict[str, str]] = {}
+
+    for path, doc in load_xml_rglob(args.texts, "*/*.xml"):
+
+        root = doc.getroot()
+        language = root.get("language")
+        if not language:
+            continue
+
+        dictionary = i18n.setdefault(language, {})
+
+        if language not in dictionary:
+            language_name = root.get("translatedname")
+            if language_name:
+                dictionary[language] = language_name
+
+        for child in skip_comments(root):
+
+            tag = child.tag.lower()
+            plain = drop_prefix(
+                tag, "entityname."
+            )  # or drop_prefix(tag, 'fabricationdescription.')
+            if not plain:
+                continue
+
+            if (tag := make_tag(plain)) in tags_to_localize:
+                assert child.text is not None
+                dictionary[tag] = child.text
+
+            elif (identifier := make_identifier(plain)) in index:
+                assert child.text is not None
+                dictionary[identifier] = child.text
+
+            else:
+                continue
+
+    for lang, dictionary in i18n.items():
+        logtime(f"{len(dictionary)} in {lang}")
+
     if not args.dry_run:
         logtime("dumping json")
         dumpme = {
-            "tags": {
+            "tags_by_identifier": {
                 identifier: item.tags for identifier, item in index.items() if item.tags
             },
             "procs": processes,
+            "i18n": i18n,
+            "sprites": sprites,
         }
         try:
             json.dump(dumpme, default=serialize_dataclass, fp=sys.stdout)
