@@ -977,7 +977,7 @@ def sprite_to_base64(path, ltwh):
     buf = io.BytesIO()
 
     thumb = image.crop(ltwh_to_ltbr(ltwh)).copy()
-    thumb.thumbnail((96, 96))
+    thumb.thumbnail((64, 64))
     thumb.save(buf, format="webp")
 
     return b64encode(buf.getvalue()).decode()
