@@ -1,0 +1,18 @@
+{
+  "name": "barollama",
+  "version": "0.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {},
+  "author": "sqwishy <somebody@froghat.ca>",
+  "license": "CC0 1.0",
+  "devDependencies": {
+    "babel-preset-solid": "^1.8.4",
+    "typescript": "^5.2.2",
+    "vite": "^4.3.9",
+    "vite-plugin-solid": "^2.7.0"
+  },
+  "dependencies": {
+    "solid-js": "^1.8.5"
+  }
+}

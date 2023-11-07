@@ -1,0 +1,108 @@
+@import "palette.css";
+
+@import url('https://fonts.googleapis.com/css2?family=Exo+2:ital@0;1&display=swap');
+
+body
+  { font: medium/1.3 'Exo 2', 'IBM Plex Sans', sans-serif;
+    background-color: var(--gb84);
+    color:            var(--gb12);
+    margin: 0 }
+
+a, input, button, textarea, select
+  { background:  transparent;
+    color:       inherit;
+    font:        inherit;
+    text-align:  inherit;
+    text-shadow: inherit }
+
+button, textarea, input, select
+  { background:    var(--gb72);
+    border:        1px solid var(--gb60);
+    border-radius: 4px; }
+
+input, select
+  { width: 36ch;
+    padding: 0.3ch 0.7ch;
+    margin: 1ch;
+    box-sizing: content-box; }
+
+.process
+  { max-width: 44ch;
+    margin: 2ch 1ch }
+
+.process span
+  { padding: 0.3ch 0.7ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap }
+
+.process > * { display: flex }
+.part
+  { display: flex }
+.part .amount
+  { flex: 0 0 3ch; text-align: right }
+.part .what
+  { flex-grow: 1 }
+
+.process,
+.part-list
+  { flex-direction: column;
+    grid-gap: 0 }
+
+.process > span
+  { background: var(--gb72);
+    border: 1px solid var(--gb60);
+    /* box-shadow: 1px 1px var(--gb96); */
+    border-radius: 4px;
+    font-size: smaller;
+
+    display: inline-flex;
+    grid-gap: 1ch;
+    margin: .4ch .6ch 0 0;
+    flex-wrap: wrap }
+
+.random + .part-list
+  { margin-left: 1ch }
+.random .what
+  { font-style: italic }
+
+.framed
+  { --shadow: var(--gb60);
+    --shadow-soft: var(--gb72);
+    --border: var(--gb96); }
+.framed
+  { border: 1px solid var(--shadow);
+    box-shadow: inset  1px  1px var(--border),
+                inset -1px -1px var(--border) }
+/* hide/merge neighbouring borders */
+.framed + .framed { border-left: 0 }
+.part + .part .framed { border-top: 0 }
+
+.part.consumed .amount
+  { --border: var(--gb-orange98);
+    --shadow: var(--gb-orange00);
+    --shadow-soft: var(--gb-orange49); }
+.part.produced .amount
+  { --border: var(--gb-green98);
+    --shadow: var(--gb-green00);
+    --shadow-soft: var(--gb-green49); }
+
+.part.consumed .amount
+  { background: var(--gb-orange49);
+    color:      var(--gb96); }
+.part.produced .amount
+  { background: var(--gb-green49);
+    color:      var(--gb96); }
+
+/* */
+.part .condition
+  { flex-shrink: 0 }
+
+/* this feels really dirty; alternatively, generate a css file with a css class
+ * per sprite that uses background-image */
+.part .sprite
+  { position: relative; flex-basis: 4ch; }
+.part .sprite img
+  { position: absolute; margin: auto;
+    top: 0; right: 0; bottom: 0; left: 0;
+    max-height: 100%; max-width: 100% }
