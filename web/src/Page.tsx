@@ -2,6 +2,11 @@ import { createSignal, createContext, createResource, createEffect, useContext }
 import { Show, For } from 'solid-js/web'
 import * as Data from "./Data"
 
+const amt = (f: number) => f < -1
+                         ? Math.abs(f)
+                         : f > 1
+                         ? f
+                         : '';
 const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 
 
@@ -105,18 +110,14 @@ function Process({ proc } : { proc: Data.Process }) {
   const { time, stations, uses, needs_recipe, description } = proc;
   return (
     <div class="process">
-      <For each={uses}>
-        {(used: Data.WeightedRandomWithReplacement | Data.Part) =>
-          ("weighted_random_with_replacement" in used)
-            ? <WeightedRandom random={used} />
-            : <Part part={used} />}
-      </For>
+      <UsesList uses={uses.filter(({ amount }) => amount < 0)} />
       <Show when={time}>
         <span>⏱️ {proc.time}s</span>
       </Show>
       <For each={stations}>
         {(station) => <span class="station">🧰 {station}</span>}
       </For>
+      <UsesList uses={uses.filter(({ amount }) => amount >= 0)} />
       <Show when={needs_recipe}>
         <span>🧠 requires recipe</span>
       </Show>
@@ -127,6 +128,18 @@ function Process({ proc } : { proc: Data.Process }) {
   )
 }
 
+function UsesList({ uses } : { uses: (Data.WeightedRandomWithReplacement | Data.Part)[] }) {
+    return (
+        <div class="uses">
+          <For each={uses}>
+            {(used) =>
+              ("weighted_random_with_replacement" in used)
+                ? <WeightedRandom random={used} />
+                : <Part part={used} />}
+          </For>
+        </div>
+    )
+}
 
 function Part({ part } : { part: Data.Part }) {
   const { what, amount, condition } = part;
@@ -137,11 +150,14 @@ function Part({ part } : { part: Data.Part }) {
     <div class="part"
          classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}
     >
-      <span class='framed amount'>{ amount }</span>
+      <span class='decoration'></span>
+      <span class='framed amount'
+        classList={{ 'amount-multiple': Math.abs(amount) > 1 }}
+      >{ amt(amount) }</span>
       <span class='framed what'>{ localize(what) }</span>
       <Show when={condition_min || condition_max}>
         <span class='framed condition'>
-          {pct(condition_min)} ❤️ {pct(condition_max)}
+          { pct(condition_min) } ❤️ { pct(condition_max) }
         </span>
       </Show>
       <Show when={sprite(what)} keyed>

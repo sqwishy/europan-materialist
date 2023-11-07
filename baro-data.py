@@ -56,6 +56,10 @@ def skip_comments(el: etree._Element) -> Generator[etree._Element, None, None]:
     return (child for child in el if child.tag is not etree.Comment)
 
 
+def flat_map(fn, iterable):
+    return chain.from_iterable(map(fn, iterable))
+
+
 def logtime(message):
     global _LAST_TIME
 
@@ -335,18 +339,12 @@ def index_document(doc) -> Generator[BaroItem | Warning, None, None]:
             continue
 
         found_sprite = None
-        for sprite_el in item.xpath("Sprite"):
-            if found_sprite is not None:
-                log_warning(
-                    "found multiple Sprite elements, only using one", element=item
-                )
+        for something in flat_map(extract_Sprite, item.xpath("InventoryIcon") + item.xpath("Sprite")):
+            if isinstance(something, Sprite):
+                found_sprite = something
                 break
-            for something in extract_Sprite(sprite_el):
-                if isinstance(something, Sprite):
-                    found_sprite = something
-                    break
-                else:
-                    yield something
+            else:
+                yield something
 
         # there are a lot of attributes on these elements,
         # we don't care to explicitly ignore them so don't
@@ -976,8 +974,9 @@ def sprite_to_base64(path, ltwh):
 
     buf = io.BytesIO()
 
-    thumb = image.crop(ltwh_to_ltbr(ltwh)).copy()
-    thumb.thumbnail((64, 64))
+    thumb = image.crop(ltwh_to_ltbr(ltwh))
+    thumb = thumb.crop(thumb.getbbox()).copy()  # auto-crop transparency
+    thumb.thumbnail((64, 64))  # thumbnail() is in-place, copy first
     thumb.save(buf, format="webp")
 
     return b64encode(buf.getvalue()).decode()
@@ -1048,7 +1047,7 @@ if __name__ == "__main__":
         item.element = apply_variant(
             variant_of.element,
             item.element,
-            only_tags=("fabricate", "deconstruct", "price"),
+            only_tags=("fabricate", "deconstruct", "price", "inventoryicon", "sprite"),
         )
 
     logtime("reading sprites")
