@@ -1,4 +1,4 @@
-import { createSignal, createContext, createResource, createEffect, useContext } from 'solid-js'
+import { createSignal, createContext, createResource, useContext, splitProps, JSX } from 'solid-js'
 import { Show, For } from 'solid-js/web'
 import * as Data from "./Data"
 
@@ -7,12 +7,15 @@ const amt = (f: number) => f < -1
                          : f > 1
                          ? f
                          : '';
+
+
 const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 
 
 const dbg = v => console.log(v) || v;
 
 
+// substring part name?
 type Filter = string;
 
 
@@ -50,16 +53,7 @@ export const Page = () => {
 
   return (
     <>
-      <div>
-        <input
-          id="search"
-          type="text"
-          placeholder="search..."
-          value={getSearch()}
-          onchange={(e) => setSearch(e.currentTarget.value)}
-        />
-        {getSearch()}
-      </div>
+      {/* language select */}
       <Show when={!resource.loading && !resource.error && resource()} keyed>
         {(stuff: Data.Stuff) => (
           <div>
@@ -82,6 +76,18 @@ export const Page = () => {
           </div>
         )}
       </Show>
+      {/* search / filter */}
+      <div>
+        <input
+          id="search"
+          type="text"
+          placeholder="search..."
+          value={getSearch()}
+          onchange={(e) => setSearch(e.currentTarget.value)}
+        />
+        {getSearch()}
+      </div>
+      {/* stuff */}
       <Show when={resource.error} keyed>
         {({ message }) => <p>error: {message}</p>}
       </Show>
@@ -99,8 +105,6 @@ export const Page = () => {
           </Show>
         </Locale.Provider>
       </Sprites.Provider>
-      <p></p>
-      <p>yoooooo</p>
     </>
   );
 };
@@ -110,19 +114,31 @@ function Process({ proc } : { proc: Data.Process }) {
   const { time, stations, uses, needs_recipe, description } = proc;
   return (
     <div class="process">
+      {/* parts consumed */}
       <UsesList uses={uses.filter(({ amount }) => amount < 0)} />
-      <Show when={time}>
-        <span>⏱️ {proc.time}s</span>
-      </Show>
-      <For each={stations}>
-        {(station) => <span class="station">🧰 {station}</span>}
-      </For>
+
+      {/* station and time */} 
+      <div class="item stations">
+        <Show when={time}>
+          <span class="time">⏱️ {proc.time}s</span>
+        </Show>
+        <For each={stations}>
+          {(station) => <><span class="station">{station}</span><Sprite what={station}/></>}
+        </For>
+      </div>
+
+      {/* parts produced */}
       <UsesList uses={uses.filter(({ amount }) => amount >= 0)} />
-      <Show when={needs_recipe}>
-        <span>🧠 requires recipe</span>
-      </Show>
-      <Show when={description}>
-        <span>🫘 {description}</span>
+
+      <Show when={needs_recipe || description}>
+        <span class="sub">
+          <Show when={needs_recipe}>
+            <span>🧠 requires recipe</span>
+          </Show>
+          <Show when={description}>
+            <span>🫘 {description}</span>
+          </Show>
+        </span>
       </Show>
     </div>
   )
@@ -130,16 +146,15 @@ function Process({ proc } : { proc: Data.Process }) {
 
 function UsesList({ uses } : { uses: (Data.WeightedRandomWithReplacement | Data.Part)[] }) {
     return (
-        <div class="uses">
-          <For each={uses}>
-            {(used) =>
-              ("weighted_random_with_replacement" in used)
-                ? <WeightedRandom random={used} />
-                : <Part part={used} />}
-          </For>
-        </div>
+      <For each={uses}>
+        {(used) =>
+          ("weighted_random_with_replacement" in used)
+            ? <WeightedRandom random={used} />
+            : <Part part={used} />}
+      </For>
     )
 }
+
 
 function Part({ part } : { part: Data.Part }) {
   const { what, amount, condition } = part;
@@ -147,24 +162,35 @@ function Part({ part } : { part: Data.Part }) {
   const [localize] = useContext(Locale)
   const [sprite] = useContext(Sprites)
   return (
-    <div class="part"
+    <div class="item part"
          classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}
     >
       <span class='decoration'></span>
-      <span class='framed amount'
+      <span class='amount'
         classList={{ 'amount-multiple': Math.abs(amount) > 1 }}
       >{ amt(amount) }</span>
-      <span class='framed what'>{ localize(what) }</span>
+      <span class='what'>{ localize(what) }</span>
       <Show when={condition_min || condition_max}>
-        <span class='framed condition'>
+        <span class='condition'>
           { pct(condition_min) } ❤️ { pct(condition_max) }
         </span>
       </Show>
-      <Show when={sprite(what)} keyed>
-        {(data) => <span class='framed sprite'><img src={`data:image/webp;base64,${data}`}/></span>}
-      </Show>
+      <Sprite what={what} />
     </div>
   );
+}
+
+
+function Sprite(props: { what: Data.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
+  const [self, rest] = splitProps(props, ["what", "class"]);
+  const [sprite] = useContext(Sprites)
+  return (
+    <Show when={sprite(self.what)} keyed>
+      {(data) => <span class={`sprite ${self.class || ''}`} {...rest}>
+        <img src={`data:image/webp;base64,${data}`}/>
+      </span>}
+    </Show>
+  )
 }
 
 
@@ -172,16 +198,14 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
   const { weighted_random_with_replacement, amount } = random;
   return (
     <>
-      <div class="part random"
+      <div class="item part random"
            classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}>
-        <span class='framed amount'>{ amount }</span>
-        <span class='framed what'>chosen at random</span>
+        <span class='amount'>{ amount }</span>
+        <span class='what'>chosen at random</span>
       </div>
-      <div class="part-list">
-        <For each={weighted_random_with_replacement}>
-          {(used: Data.Part) => <Part part={used} />}
-        </For>
-      </div>
+      <For each={weighted_random_with_replacement}>
+        {(used: Data.Part) => <Part part={used} />}
+      </For>
     </>
   )
 }

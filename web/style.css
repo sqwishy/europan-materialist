@@ -2,10 +2,29 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Exo+2:ital@0;1&display=swap');
 
+:root
+      { --panel: var(--gb72);
+        --input: var(--gb72);
+      --outline: var(--gb60);
+         --page: var(--gb84);
+         --text: var(--gb12);
+      --station: var(--gb-yellow00);
+     --consumed: var(--gb-orange49);
+     --produced: var(--gb-green49); }
+
+/* :root */
+/*   { --panel: var(--baro72); */
+/*     --input: var(--baro72); */
+/*   --outline: var(--baro60); */
+/*      --page: var(--baro60); */
+/*      --text: var(--baro00); */
+/*      --consumed: var(--b-rd50); */
+/*      --produced: var(--b-bl50); } */
+
 body
   { font: medium/1.5 'Exo 2', 'IBM Plex Sans', sans-serif;
-    background-color: var(--gb84);
-    color:            var(--gb12);
+    background-color: var(--page);
+    color:            var(--text);
     margin: 0 }
 
 a, input, button, textarea, select
@@ -16,70 +35,61 @@ a, input, button, textarea, select
     text-shadow: inherit }
 
 button, textarea, input, select
-  { background:    var(--gb72);
-    border:        1px solid var(--gb60);
-    border-radius: 4px; }
+  { background-color: var(--input);
+    border:           1px solid var(--outline);
+    border-radius:    4px; }
 
 input, select
-  { width: 36ch;
-    padding: 0.3ch 0.7ch;
-    margin: 1ch;
+  { width:      36ch;
+    padding:    0.3ch 0.7ch;
+    margin:     1ch;
     box-sizing: content-box; }
 
 .process
   { max-width: 44ch;
-    margin: 2ch 1ch }
+    margin:    2ch 1ch }
 
 .process span
-  { padding: 0.3ch 0.7ch;
-    overflow: hidden;
+  { padding:       0.3ch 0.7ch;
+    overflow:      hidden;
     text-overflow: ellipsis;
-    white-space: nowrap }
+    white-space:   nowrap }
 
-.process > * { display: flex }
-.part { display: flex }
+.item { display: flex }
 
-.part .amount
+.item .amount
   { flex: 0 0 3ch; text-align: right }
-.part .what
+.item .station,
+.item .what
   { flex-grow: 1 }
 
-.process,
-.uses,
-.part-list
-  { flex-direction: column;
-    grid-gap: 0 }
+/* .process > span */
+/*   { background-color: var(--panel); */
+/*     border:           1px solid var(--outline); */
+/*     border-radius:    4px; */
+/*     font-size:        smaller; */
 
-.process > span
-  { background: var(--gb72);
-    border: 1px solid var(--gb60);
-    /* box-shadow: 1px 1px var(--gb96); */
-    border-radius: 4px;
-    font-size: smaller;
-
-    display: inline-flex;
-    grid-gap: 1ch;
-    /* margin: .4ch .6ch 0 0; */
-    flex-wrap: wrap }
+/*     display:   inline-flex; */
+/*     grid-gap:  1ch; */
+/*     flex-wrap: wrap } */
 
 .random + .part-list
   { margin-left: 1ch }
 .random .what
   { font-style: italic }
 
-.framed
-  { --shadow: var(--gb60);
-    --shadow-soft: var(--gb72);
-    --border: var(--gb96); }
+/* .framed */
+/*        { --shadow: var(--gb60); */
+/*     --shadow-soft: var(--gb72); */
+/*          --border: var(--gb96); } */
 
-.part
-  { background: var(--gb72);
-    border: 1px solid var(--gb60);
+.part, .item
+  { background-color: var(--panel);
+    /* border: 1px solid var(--gb60); */
     /* box-shadow: 1px 1px var(--gb96); */
-    border-radius: 4px;
+    /* border-radius: 4px; */
     /* margin: .2ch 0; */
   }
-.part + .part { border-top: 0 }
 
 /* .part > .framed + .framed */
 /*   { border-left: 4px dotted var(--gb60) } */
@@ -107,11 +117,27 @@ input, select
 /*   { background: var(--gb-green49); */
 /*     color:      var(--gb96); } */
 
-.part .decoration
+.item
+  {     border: 0 solid var(--outline);
+  border-width: 0 1px 0 1px }
+.item:first-of-type
+  {    border-top-width: 1px }
+.item:last-of-type
+  { border-bottom-width: 1px }
+
+.item.stations
+  { background-color: var(--station);
+    color: var(--gb96);
+    border: 1px solid var(--gb48);
+    box-shadow: inset  1px  1px var(--gb-yellow49),
+                inset -1px -1px var(--gb-yellow49)
+  }
+
+.item .decoration
   { box-sizing: border-box; width: 24px; margin-left: 8px }
 
 /* mask-image not well supported by wekbit browsers lmao */
-.part .decoration
+.item .decoration
   {          mask-repeat: no-repeat;
     --webkit-mask-repeat: no-repeat;
              mask-size:   cover;
@@ -119,35 +145,37 @@ input, select
              mask-position: center;
     --webkit-mask-position: center }
 /* stripe repeating */
-.part.consumed .decoration,
-.part.produced .decoration
+.item.consumed .decoration,
+.item.produced .decoration
   /* {          mask-image: url('data:image/svg+xml,<svg width="64" height="64" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="m0 0v16l32 18 32-18v-16z"/><path d="m0 34v30h64v-30l-32 18z"/></svg>'); */
   /*   --webkit-mask-image: url('data:image/svg+xml,<svg width="64" height="64" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="m0 0v16l32 18 32-18v-16z"/><path d="m0 34v30h64v-30l-32 18z"/></svg>') } */
-  { clip-path: polygon(0 0, 100% 0, 100% 30%, 50% 50%, 0 30%,
-                       0 60%, 50% 80%, 100% 60%, 100% 100%, 0 100%) }
+  { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%,
+                       0 70%,  50% 90%, 100% 70%, 100% 100%, 0 100%) }
 /* stripe end */
-.part.produced:last-of-type .decoration
+.item.produced:last-of-type .decoration
 /*   {          mask-image: url('data:image/svg+xml,<svg width="64" height="64" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="m0 0v22l32 18 32-18v-22z"/></svg>'); */
 /*     --webkit-mask-image: url('data:image/svg+xml,<svg width="64" height="64" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="m0 0v22l32 18 32-18v-22z"/></svg>') } */
-  { clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 70%, 0 50%) }
+  { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%) }
 
-/* .part .decoration { margin-top: -1px; } */
-.part.consumed .decoration
-  { background-color: var(--gb-orange49) }
-.part.produced .decoration
-  { background-color: var(--gb-green49) }
+/* .item .decoration { margin-top: -1px; } */
+/* .item          .decoration */
+/*   { background-color: var(--fab) } */
+.item.consumed .decoration
+  { background-color: var(--consumed) }
+.item.produced .decoration
+  { background-color: var(--produced) }
 
-.part .amount.amount-multiple::after
+.item .amount.amount-multiple::after
   { content: '×'; line-height: 0 }
 
-.part .condition
+.item .condition
   { flex-shrink: 0 }
 
 /* this feels really dirty; alternatively, generate a css file with a css class
  * per sprite that uses background-image */
-.part .sprite
-  { position: relative; flex-basis: 48px; }
-.part .sprite img
+.item .sprite
+  { position: relative; flex-basis: 48px }
+.item .sprite img
   { position: absolute; margin: auto;
     top: 0; right: 0; bottom: 0; left: 0;
     max-height: 100%; max-width: 100% }

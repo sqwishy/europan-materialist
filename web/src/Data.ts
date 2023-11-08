@@ -16,7 +16,7 @@ export type WeightedRandomWithReplacement = {
 export type Process = {
   uses: (Part | WeightedRandomWithReplacement)[],
   skills: Record<Identifier, number>,
-  stations: string[],
+  stations: Identifier[],
   time: number
   needs_recipe?: boolean
   description?: string

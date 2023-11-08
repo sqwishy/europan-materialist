@@ -99,8 +99,8 @@ def split_tag_list(value: str) -> list[Tag]:
     return [make_tag(s) for s in value.split(",") if s]
 
 
-def split_station_list(value: str) -> list[str]:
-    return value.split(",")
+def split_identifier_list(value: str) -> list[str]:
+    return [make_identifier(s) for s in value.split(",") if s]
 
 
 def split_ltwh(value: str) -> tuple[int, int, int, int]:
@@ -171,7 +171,7 @@ class Process(object):
     """Fabricate / Deconstruct / Price"""
 
     uses: list[Part | RandomChoices]
-    stations: list[str]
+    stations: list[Identifier]
     skills: dict[Identifier, float]
     time: float = 0.0
     needs_recipe: bool = False
@@ -339,7 +339,9 @@ def index_document(doc) -> Generator[BaroItem | Warning, None, None]:
             continue
 
         found_sprite = None
-        for something in flat_map(extract_Sprite, item.xpath("InventoryIcon") + item.xpath("Sprite")):
+        for something in flat_map(
+            extract_Sprite, item.xpath("InventoryIcon") + item.xpath("Sprite")
+        ):
             if isinstance(something, Sprite):
                 found_sprite = something
                 break
@@ -437,7 +439,7 @@ def extract_Fabricate(
             )
         ],
         skills={},
-        stations=attrs.use("suitablefabricators", convert=split_station_list),
+        stations=attrs.use("suitablefabricators", convert=split_identifier_list),
         time=attrs.use("requiredtime", convert=float, default=1.0),
         needs_recipe=attrs.use("requiresrecipe", default=False, convert=xmlbool),
         description=attrs.opt("displayname"),
@@ -518,8 +520,8 @@ def extract_Deconstruct(el) -> Generator[Process | Warning, None, None]:
         time=attrs.use("time", convert=float, default=1.0),
         stations=attrs.use(
             "requireddeconstructor",
-            default=["deconstructor"],
-            convert=split_station_list,
+            default=[make_identifier("deconstructor")],
+            convert=split_identifier_list,
         ),
     )
 
@@ -716,7 +718,7 @@ def extract_Price(el) -> Generator[Process | Warning, None, None]:
             "minleveldifficulty",
         )
 
-        stations = attrs.use("storeidentifier", convert=split_station_list)
+        stations = attrs.use("storeidentifier", convert=split_identifier_list)
 
         if attrs.use("sold", convert=xmlbool, default=is_sold_by_stores_generally):
             yield Process(
@@ -1097,11 +1099,13 @@ if __name__ == "__main__":
                     part.combine_in_place(other)
                     del process.uses[i + 1 + j]
 
+    # TODO prune items that aren't referenced in any processes
+
     logtime(f"found {len(processes)} Process for {len(index)} items")
 
     logtime(f"i18n")
 
-    tags_to_localize = set(chain.from_iterable(item.tags for item in index.values()))
+    tags_to_localize = set() # set(chain.from_iterable(item.tags for item in index.values()))
     i18n: dict[str, dict[str, str]] = {}
 
     for path, doc in load_xml_rglob(args.texts, "*/*.xml"):
@@ -1121,11 +1125,14 @@ if __name__ == "__main__":
         for child in skip_comments(root):
 
             tag = child.tag.lower()
-            plain = drop_prefix(
-                tag, "entityname."
-            )  # or drop_prefix(tag, 'fabricationdescription.')
+            plain = drop_prefix(tag, "entityname.")
+            # or drop_prefix(tag, 'fabricationdescription.')
             if not plain:
                 continue
+
+            # this is a little weird, some things like "fabricator" are tags
+            # and entities, but both receive the same localization? FIXME
+            # tags_to_localize is empty above to skip this
 
             if (tag := make_tag(plain)) in tags_to_localize:
                 assert child.text is not None
@@ -1134,9 +1141,6 @@ if __name__ == "__main__":
             elif (identifier := make_identifier(plain)) in index:
                 assert child.text is not None
                 dictionary[identifier] = child.text
-
-            else:
-                continue
 
     for lang, dictionary in i18n.items():
         logtime(f"{len(dictionary)} in {lang}")

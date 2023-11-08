@@ -1,76 +1,17 @@
 :root {
---wiki-p00: #2a2405;
---wiki-p12: #443e1d;
---wiki-p24: #5f5834;
---wiki-p36: #79734b;
---wiki-p48: #948d62;
---wiki-p60: #aea678;
---wiki-p72: #c8c08e;
---wiki-p84: #e2d9a4;
---wiki-p96: #faf0b8;
+--baro00: #202725;
+--baro12: #232b2a;
+--baro24: #2e3636;
+--baro36: #3f494a;
+--baro48: #576365;
+--baro60: #97b0b8;
+--baro72: #bfd6e1;
+--baro84: #e2f0fb;
+--baro96: #f8f9fa;
 
---wiki-a00: #0c2b19;
---wiki-a12: #254531;
---wiki-a24: #3d5f4a;
---wiki-a36: #567962;
---wiki-a48: #6f947c;
---wiki-a60: #88ae95;
---wiki-a72: #a1c8ae;
---wiki-a84: #bae2c7;
---wiki-a96: #def6e5;
+--b-rd50: #953e37;
 
---wiki-b00: #1e2924;
---wiki-b12: #333f39;
---wiki-b24: #495650;
---wiki-b36: #616e67;
---wiki-b48: #798780;
---wiki-b60: #92a19a;
---wiki-b72: #acbbb4;
---wiki-b84: #c7d7cf;
---wiki-b96: #e3f3eb;
-
---baro-sang00: #381a1a;
---baro-sang12: #472a29;
---baro-sang24: #593d3c;
---baro-sang36: #6d5352;
---baro-sang48: #836c6a;
---baro-sang60: #9c8786;
---baro-sang72: #b6a5a5;
---baro-sang84: #d4c7c6;
---baro-sang96: #f4ecec;
-
---baro-teal00: #181d0c;
---baro-teal12: #272e1f;
---baro-teal24: #394235;
---baro-teal36: #4e594d;
---baro-teal48: #667268;
---baro-teal60: #808e85;
---baro-teal72: #9dada5;
---baro-teal84: #becec8;
---baro-teal96: #e1f3ee;
-
---baro-titl00: #394235;
---baro-titl16: #5d756b;
---baro-titl32: #8d9e95;
---baro-titl48: #bfc2b9;
---baro-titl64: #5f533f;
---baro-titl80: #947452;
---baro-titl96: #b8a680;
-
---baro-banr00: #752b27;
---baro-banr16: #4c2923;
---baro-banr32: #508e8a;
---baro-banr48: #577c60;
---baro-banr64: #afccc2;
---baro-banr80: #446a3c;
---baro-banr96: #88b08d;
-
---baro-ship00: #58060b;
---baro-ship19: #36645d;
---baro-ship38: #825049;
---baro-ship57: #465759;
---baro-ship76: #163353;
---baro-ship95: #4a3f2f;
+--b-bl50: #2c8a96;
 
 --ayc00: #14191f;
 --ayc12: #282e35;
@@ -117,5 +58,9 @@
 --gb-orange00: #af3a03;
 --gb-orange49: #d65d0e;
 --gb-orange98: #fe8019;
+
+--gb-yellow00: #b57614;
+--gb-yellow49: #d79921;
+--gb-yellow98: #fabd2f;
 
 }
