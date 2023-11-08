@@ -1,4 +1,5 @@
-import { createSignal, createContext, createResource, useContext, splitProps, JSX } from 'solid-js'
+import { createSignal, createContext, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
+import { createStore, reconcile } from 'solid-js/store'
 import { Show, For } from 'solid-js/web'
 import * as Data from "./Data"
 
@@ -12,7 +13,7 @@ const amt = (f: number) => f < -1
 const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 
 
-const dbg = v => console.log(v) || v;
+// const dbg = v => console.log(v) || v;
 
 
 // substring part name?
@@ -34,8 +35,30 @@ const Sprites = createContext<[GetSprite]>([_ => null]);
 
 export const Page = () => {
   const [resource] = createResource(Data.fetchStuff)
-  const [getSearch, setSearch] = createSignal('')
+  const [getSearch, setSearch] = createSignal<Filter>('')
+  const [getLimit, setLimit] = createSignal<number>(200)
   const [getLanguage, setLanguage] = createSignal('English')
+
+  const [processes, setProcesses] = createStore<Data.Process[]>([]);
+
+  createEffect(() => {
+    let procs, search: Filter, limit: number;
+
+    if (   resource.loading
+        || resource.error
+        || !(procs = resource.latest?.procs))
+      return setProcesses([]);
+
+    if ((search = getSearch()).length)
+      procs = procs.filter((p) => applyFilter(p, search))
+
+    if (limit = getLimit())
+      procs = procs.slice(0, limit)
+
+    /* maybe using a store for this is silly,
+     * thought reconcile might be good but seems to not work */
+    setProcesses(procs)
+  });
 
   const localize: Localize = (text: string) => (   !resource.loading
                                                 && !resource.error
@@ -44,19 +67,12 @@ export const Page = () => {
                                                && !resource.error
                                                && (resource()?.sprites[i]) || null)
 
-  const filterProcs = (procs: Data.Process[], filter: Filter) => {
-    if (!filter.length)
-      return procs
-
-    return procs.filter((p) => applyFilter(p, filter))
-  }
-
   return (
     <>
       {/* language select */}
       <Show when={!resource.loading && !resource.error && resource()} keyed>
         {(stuff: Data.Stuff) => (
-          <div>
+          <p>
             <select
               onchange={(e) => setLanguage(e.currentTarget.value)}
             >
@@ -72,21 +88,33 @@ export const Page = () => {
                 )}
               </For>
             </select>
-            {getLanguage()}
-          </div>
+          </p>
         )}
       </Show>
       {/* search / filter */}
-      <div>
+      <p>
         <input
           id="search"
           type="text"
+          size="30"
           placeholder="search..."
           value={getSearch()}
           onchange={(e) => setSearch(e.currentTarget.value)}
         />
         {getSearch()}
-      </div>
+      </p>
+      <p>
+        limit <input
+          id="limit"
+          type="text"
+          size="6"
+          inputmode="decimal"
+          placeholder="limit..."
+          value={getLimit()}
+          onchange={(e) => setLimit(parseInt(e.currentTarget.value, 10) || 0)}
+        />
+        showing {processes?.length}
+      </p>
       {/* stuff */}
       <Show when={resource.error} keyed>
         {({ message }) => <p>error: {message}</p>}
@@ -96,15 +124,12 @@ export const Page = () => {
       </Show>
       <Sprites.Provider value={[getSprite]}>
         <Locale.Provider value={[localize]}>
-          <Show when={!resource.loading && !resource.error && resource()} keyed>
-            {(stuff: Data.Stuff) => (
-              <For each={filterProcs(stuff.procs, getSearch())/*.filter(({stations}) => stations.length > 1)*/}>
-                {(proc) => <Process proc={proc} />}
-              </For>
-            )}
-          </Show>
+          <For each={processes}>
+            {(proc) => <Process proc={proc} />}
+          </For>
         </Locale.Provider>
       </Sprites.Provider>
+      <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p>
     </>
   );
 };

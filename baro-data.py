@@ -99,7 +99,7 @@ def split_tag_list(value: str) -> list[Tag]:
     return [make_tag(s) for s in value.split(",") if s]
 
 
-def split_identifier_list(value: str) -> list[str]:
+def split_identifier_list(value: str) -> list[Identifier]:
     return [make_identifier(s) for s in value.split(",") if s]
 
 
@@ -964,7 +964,7 @@ def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     return (l, t, l + w, t + h)
 
 
-_sprite_cache: dict[pathlib.Path] = {}
+_sprite_cache = {} # type: ignore
 
 
 def sprite_to_base64(path, ltwh):

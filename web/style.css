@@ -40,11 +40,13 @@ button, textarea, input, select
     border-radius:    4px; }
 
 input, select
-  { width:      36ch;
-    padding:    0.3ch 0.7ch;
-    margin:     1ch;
+  { padding:    0.3ch 0.7ch;
     box-sizing: content-box; }
 
+button          { cursor: pointer; }
+button:disabled { cursor: not-allowed }
+
+p,
 .process
   { max-width: 44ch;
     margin:    2ch 1ch }
