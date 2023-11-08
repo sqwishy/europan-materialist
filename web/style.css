@@ -40,11 +40,13 @@ button, textarea, input, select
     border-radius:    4px; }
 
 input, select
-  { padding:    0.3ch 0.7ch;
+  { padding:    0.3ch 0.4ch;
     box-sizing: content-box; }
 
 button          { cursor: pointer; }
 button:disabled { cursor: not-allowed }
+
+ul { margin: 0; padding: 0 }
 
 p,
 .process
@@ -52,126 +54,69 @@ p,
     margin:    2ch 1ch }
 
 .process span
-  { padding:       0.3ch 0.7ch;
+  { padding:       0.3ch 0.4ch;
     overflow:      hidden;
     text-overflow: ellipsis;
     white-space:   nowrap }
 
 .item { display: flex }
 
-.item .amount
-  { flex: 0 0 3ch; text-align: right }
+.item > *
+  { flex: 0 0 min-content }
+.item .amount,
+.item .time
+  { text-align: right; min-width: 5ch }
 .item .station,
 .item .what
-  { flex-grow: 1 }
+  { flex: 1 1 max-content }
 
-/* .process > span */
-/*   { background-color: var(--panel); */
-/*     border:           1px solid var(--outline); */
-/*     border-radius:    4px; */
-/*     font-size:        smaller; */
-
-/*     display:   inline-flex; */
-/*     grid-gap:  1ch; */
-/*     flex-wrap: wrap } */
-
-.random + .part-list
+.random + .random-list
   { margin-left: 1ch }
 .random .what
   { font-style: italic }
 
-/* .framed */
-/*        { --shadow: var(--gb60); */
-/*     --shadow-soft: var(--gb72); */
-/*          --border: var(--gb96); } */
-
-.part, .item
-  { background-color: var(--panel);
-    /* border: 1px solid var(--gb60); */
-    /* box-shadow: 1px 1px var(--gb96); */
-    /* border-radius: 4px; */
-    /* margin: .2ch 0; */
-  }
-
-/* .part > .framed + .framed */
-/*   { border-left: 4px dotted var(--gb60) } */
-
-/* .framed */
-/*   { border: 1px solid var(--shadow); */
-/*     box-shadow: inset  1px  1px var(--border), */
-/*                 inset -1px -1px var(--border) } */
-/* /1* hide/merge neighbouring borders *1/ */
-/* .framed + .framed { border-left: 0 } */
-/* .part + .part .framed { border-top: 0 } */
-
-/* .part.consumed .amount */
-/*   { --border: var(--gb-orange98); */
-/*     --shadow: var(--gb-orange00); */
-/*     --shadow-soft: var(--gb-orange49); } */
-/* .part.produced .amount */
-/*   { --border: var(--gb-green98); */
-/*     --shadow: var(--gb-green00); */
-/*     --shadow-soft: var(--gb-green49); } */
-/* .part.consumed .amount */
-/*   { background: var(--gb-orange49); */
-/*     color:      var(--gb96); } */
-/* .part.produced .amount */
-/*   { background: var(--gb-green49); */
-/*     color:      var(--gb96); } */
-
 .item
-  {     border: 0 solid var(--outline);
-  border-width: 0 1px 0 1px }
+  { background-color: var(--panel);
+              border: 0 solid var(--outline);
+        border-width: 0 1px 0 1px }
 .item:first-of-type
   {    border-top-width: 1px }
 .item:last-of-type
   { border-bottom-width: 1px }
 
+/* stations (Deconstructor/Fabricator) row */
 .item.stations
   { background-color: var(--station);
-    color: var(--gb96);
-    border: 1px solid var(--gb48);
-    box-shadow: inset  1px  1px var(--gb-yellow49),
-                inset -1px -1px var(--gb-yellow49)
+    color:       var(--gb96);
+    text-shadow: 1px 1px var(--gb24);
+    border:      1px solid var(--gb48);
+    box-shadow:  inset  1px  1px var(--gb-yellow49),
+                 inset -1px -1px var(--gb-yellow49)
   }
 
+/* stack decoration under amount text */
 .item .decoration
-  { box-sizing: border-box; width: 24px; margin-left: 8px }
-
-/* mask-image not well supported by wekbit browsers lmao */
-.item .decoration
-  {          mask-repeat: no-repeat;
-    --webkit-mask-repeat: no-repeat;
-             mask-size:   cover;
-    --webkit-mask-size:   cover;
-             mask-position: center;
-    --webkit-mask-position: center }
-/* stripe repeating */
-.item.consumed .decoration,
-.item.produced .decoration
-  /* {          mask-image: url('data:image/svg+xml,<svg width="64" height="64" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="m0 0v16l32 18 32-18v-16z"/><path d="m0 34v30h64v-30l-32 18z"/></svg>'); */
-  /*   --webkit-mask-image: url('data:image/svg+xml,<svg width="64" height="64" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="m0 0v16l32 18 32-18v-16z"/><path d="m0 34v30h64v-30l-32 18z"/></svg>') } */
-  { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%,
-                       0 70%,  50% 90%, 100% 70%, 100% 100%, 0 100%) }
-/* stripe end */
-.item.produced:last-of-type .decoration
-/*   {          mask-image: url('data:image/svg+xml,<svg width="64" height="64" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="m0 0v22l32 18 32-18v-22z"/></svg>'); */
-/*     --webkit-mask-image: url('data:image/svg+xml,<svg width="64" height="64" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="m0 0v22l32 18 32-18v-22z"/></svg>') } */
-  { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%) }
-
-/* .item .decoration { margin-top: -1px; } */
-/* .item          .decoration */
-/*   { background-color: var(--fab) } */
-.item.consumed .decoration
-  { background-color: var(--consumed) }
-.item.produced .decoration
-  { background-color: var(--produced) }
+  { box-sizing: border-box; min-width: 24px; margin-right: -32px; margin-left: 8px }
+.item .decoration + .amount
+  { z-index: 1 }
 
 .item .amount.amount-multiple::after
   { content: '×'; line-height: 0 }
 
-.item .condition
-  { flex-shrink: 0 }
+/* stripe repeating */
+.item .decoration
+  { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%,
+                       0 70%,  50% 90%, 100% 70%, 100% 100%, 0 100%) }
+
+/* stripe end */
+.item.produced:last-of-type .decoration
+  { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%) }
+
+/* stripe colors */
+.item.consumed .decoration
+  { background-color: var(--consumed) }
+.item.produced .decoration
+  { background-color: var(--produced) }
 
 /* this feels really dirty; alternatively, generate a css file with a css class
  * per sprite that uses background-image */

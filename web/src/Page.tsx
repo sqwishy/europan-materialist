@@ -137,6 +137,7 @@ export const Page = () => {
 
 function Process({ proc } : { proc: Data.Process }) {
   const { time, stations, uses, needs_recipe, description } = proc;
+  const [localize] = useContext(Locale)
   return (
     <div class="process">
       {/* parts consumed */}
@@ -148,7 +149,7 @@ function Process({ proc } : { proc: Data.Process }) {
           <span class="time">⏱️ {proc.time}s</span>
         </Show>
         <For each={stations}>
-          {(station) => <><span class="station">{station}</span><Sprite what={station}/></>}
+          {(station) => <><span class="station">{localize(station)}</span><Sprite what={station}/></>}
         </For>
       </div>
 
@@ -190,10 +191,10 @@ function Part({ part } : { part: Data.Part }) {
     <div class="item part"
          classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}
     >
-      <span class='decoration'></span>
-      <span class='amount'
-        classList={{ 'amount-multiple': Math.abs(amount) > 1 }}
-      >{ amt(amount) }</span>
+        <span class='decoration'></span>
+        <span class='amount' classList={{ 'amount-multiple': Math.abs(amount) > 1 }}>
+          { amt(amount) }
+        </span>
       <span class='what'>{ localize(what) }</span>
       <Show when={condition_min || condition_max}>
         <span class='condition'>
@@ -218,19 +219,23 @@ function Sprite(props: { what: Data.Identifier } & JSX.HTMLAttributes<HTMLSpanEl
   )
 }
 
-
 function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacement }) {
   const { weighted_random_with_replacement, amount } = random;
   return (
     <>
       <div class="item part random"
-           classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}>
+           classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}
+      >
+        <span class='decoration'></span>
         <span class='amount'>{ amount }</span>
         <span class='what'>chosen at random</span>
       </div>
-      <For each={weighted_random_with_replacement}>
-        {(used: Data.Part) => <Part part={used} />}
-      </For>
+      {/* this ul kind of a hack so that last-of-type works */}
+      <ul class="random-list">
+        <For each={weighted_random_with_replacement}>
+          {(used: Data.Part) => <Part part={used} />}
+        </For>
+      </ul>
     </>
   )
 }

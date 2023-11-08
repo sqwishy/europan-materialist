@@ -304,6 +304,7 @@ class Sprite(object):
 class BaroItem(object):
     element: etree._Element
     identifier: Identifier
+    nameidentifier: str | None
     variant_of: Identifier | None
     tags: list[Tag]
     sprite: Sprite | None
@@ -356,6 +357,7 @@ def index_document(doc) -> Generator[BaroItem | Warning, None, None]:
         yield BaroItem(
             element=item,
             identifier=attrs.use("identifier", convert=make_identifier),
+            nameidentifier=attrs.or_none("nameidentifier"),
             tags=attrs.use("tags", convert=split_tag_list, default=[]),
             variant_of=attrs.or_none("variantof", convert=make_identifier)
             or attrs.or_none("inherit", convert=make_identifier),
@@ -406,8 +408,7 @@ def extract_Item(
 
 
 def extract_item_identifier(el) -> Identifier:
-    # TODO nameidentifier is used for display, should probably be used no this way
-    identifier = el.get("identifier")  # or el.get("nameidentifier")
+    identifier = el.get("identifier")
 
     if not identifier:
         raise MissingAttribute(dict(attribute="identifier", element=el))
