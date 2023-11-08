@@ -174,7 +174,9 @@ class Process(object):
     stations: list[Identifier]
     skills: dict[Identifier, float]
     time: float = 0.0
+    # see fabricatorrequiresrecipe in localization strings
     needs_recipe: bool = False
+    # see displayname.{description} in localization strings?
     description: str | None = None
 
 
@@ -382,8 +384,10 @@ def extract_Sprite(el):
         # fmt: on
 
         yield Sprite(texture=attrs.use("texture"), ltwh=ltwh)
+
     except MissingAttribute as err:
         yield err.as_warning()
+
     except BadValue as err:
         yield err.as_warning()
 
@@ -401,8 +405,9 @@ def extract_Item(
             elif tag == "deconstruct":
                 yield from extract_Deconstruct(el)
 
-            # elif tag == "price":
-            #     yield from extract_Price(el)
+            elif tag == "price":
+                yield from extract_Price(el)
+
         except MissingAttribute as err:
             yield err.as_warning()
 
@@ -704,6 +709,15 @@ def extract_Price(el) -> Generator[Process | Warning, None, None]:
 
     yield from attrs.warnings()
 
+    price = Process(
+        stations=[],
+        uses=[
+            Part(what=money(), amount=-1),
+            Part(what=extract_item_identifier(el.getparent()), amount=1),
+        ],
+        skills={},
+    )
+
     for child in el.xpath("*"):
 
         if child.tag.lower() != "price":
@@ -719,19 +733,22 @@ def extract_Price(el) -> Generator[Process | Warning, None, None]:
             "minleveldifficulty",
         )
 
-        stations = attrs.use("storeidentifier", convert=split_identifier_list)
+        try:
+            stations = attrs.use("storeidentifier", convert=split_identifier_list)
 
-        if attrs.use("sold", convert=xmlbool, default=is_sold_by_stores_generally):
-            yield Process(
-                stations=stations,
-                uses=[
-                    Part(what=money(), amount=-1),
-                    Part(what=extract_item_identifier(el.getparent()), amount=1),
-                ],
-                skills={},
-            )
+            if attrs.use("sold", convert=xmlbool, default=is_sold_by_stores_generally):
+                price.stations.extend(stations)
+
+        except MissingAttribute as err:
+            yield err.as_warning()
+
+        except BadValue as err:
+            yield err.as_warning()
 
         yield from attrs.warnings()
+
+    if price.stations:
+        yield price
 
 
 def apply_variant(
@@ -1086,6 +1103,9 @@ if __name__ == "__main__":
 
         process.uses.sort(key=lambda p: p.amount)
 
+        # if parts consumed or produced are listed twice with the same
+        # information, combine their amounts into one item
+
         for i, part in enumerate_rev(process.uses[:-1]):
 
             if isinstance(part, RandomChoices):
@@ -1126,8 +1146,9 @@ if __name__ == "__main__":
         for child in skip_comments(root):
 
             tag = child.tag.lower()
-            plain = drop_prefix(tag, "entityname.")
-            # or drop_prefix(tag, 'fabricationdescription.')
+            plain = drop_prefix(tag, "entityname.") \
+                 or drop_prefix(tag, "npctitle.") # merchants
+            #     or drop_prefix(tag, 'fabricationdescription.') # tags like munition_core
             if not plain:
                 continue
 
