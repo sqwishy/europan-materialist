@@ -17,12 +17,15 @@ from typing import (
     TypeAlias,
     Callable,
     Iterator,
-    Generator,
     overload,
     TypeVar,
+    TYPE_CHECKING,
 )
 from types import MappingProxyType
 from time import monotonic_ns
+
+if TYPE_CHECKING:
+    import PIL
 
 
 class ansi:
@@ -52,7 +55,7 @@ class ansi:
 _LAST_TIME = None
 
 
-def skip_comments(el: etree._Element) -> Generator[etree._Element, None, None]:
+def skip_comments(el: etree._Element) -> Iterator[etree._Element]:
     return (child for child in el if child.tag is not etree.Comment)
 
 
@@ -178,6 +181,13 @@ class Process(object):
     needs_recipe: bool = False
     # see displayname.{description} in localization strings?
     description: str | None = None
+
+    def _iter_parts(self) -> Iterator[Part]:
+        for uses in self.uses:
+            if isinstance(uses, RandomChoices):
+                yield from uses.weighted_random_with_replacement
+            else:
+                yield uses
 
 
 @dataclass
@@ -315,8 +325,17 @@ class BaroItem(object):
     def is_variant(self) -> bool:
         return self.variant_of is not None
 
+    def used_in(self, process: Process):
+        return (
+            any(
+                self.identifier == part.what or part.what in self.tags
+                for part in process._iter_parts()
+            )
+            or self.identifier in process.stations
+        )
 
-def index_document(doc) -> Generator[BaroItem | Warning, None, None]:
+
+def index_document(doc) -> Iterator[BaroItem | Warning]:
     root = doc.getroot()
     element_tag = root.tag.lower()
 
@@ -394,7 +413,7 @@ def extract_Sprite(el):
 
 def extract_Item(
     item,
-) -> Generator[Process | Warning, None, None]:
+) -> Iterator[Process | Warning]:
     for el in skip_comments(item):
         tag = el.tag.lower()
 
@@ -423,7 +442,7 @@ def extract_item_identifier(el) -> Identifier:
 
 def extract_Fabricate(
     el,
-) -> Generator[Process | Warning, None, None]:
+) -> Iterator[Process | Warning]:
     # <Fabricate> is a child of <Item> or whatever. Our model is upside down
     # compared to Barotrauma. Our Fabricate has the item it outs output as a
     # child in `uses`.
@@ -476,7 +495,7 @@ def extract_Fabricate(
 
 def extract_Fabricate_Item(
     el,
-) -> Generator[RequiredSkill | Part | Warning, None, None]:
+) -> Iterator[RequiredSkill | Part | Warning]:
     attrs = Attribs.from_element(el)
 
     if el.tag.lower() == "requiredskill":
@@ -517,7 +536,7 @@ def extract_Fabricate_Item(
         yield warn_unexpected_element(unexpected=child)
 
 
-def extract_Deconstruct(el) -> Generator[Process | Warning, None, None]:
+def extract_Deconstruct(el) -> Iterator[Process | Warning]:
     attrs = Attribs.from_element(el)
 
     fab = Process(
@@ -595,7 +614,7 @@ def extract_Deconstruct(el) -> Generator[Process | Warning, None, None]:
     yield from attrs.warnings()
 
 
-def extract_Deconstruct_Item(el) -> Generator[Part | Warning, None, None]:
+def extract_Deconstruct_Item(el) -> Iterator[Part | Warning]:
     attrs = Attribs.from_element(el)
     attrs.ignore(
         "commonness",
@@ -686,7 +705,7 @@ def extract_Deconstruct_Item(el) -> Generator[Part | Warning, None, None]:
     yield from attrs.warnings()
 
 
-def extract_Price(el) -> Generator[Process | Warning, None, None]:
+def extract_Price(el) -> Iterator[Process | Warning]:
     attrs = Attribs.from_element(el)
 
     # canbespecial is for discounts or in demand i guess? could be interesting
@@ -897,7 +916,7 @@ class Attribs(dict):
         if self:
             raise UnexpectedElement(self)
 
-    def warnings(self) -> Generator[Warning, None, None]:
+    def warnings(self) -> Iterator[Warning]:
         if self:
             yield Warning(
                 "attributes on element were not used",
@@ -982,7 +1001,7 @@ def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     return (l, t, l + w, t + h)
 
 
-_sprite_cache = {} # type: ignore
+_sprite_cache: dict[str, "PIL.Image.Image"] = {}
 
 
 def sprite_to_base64(path, ltwh):
@@ -997,6 +1016,8 @@ def sprite_to_base64(path, ltwh):
     thumb = image.crop(ltwh_to_ltbr(ltwh))
     thumb = thumb.crop(thumb.getbbox()).copy()  # auto-crop transparency
     thumb.thumbnail((64, 64))  # thumbnail() is in-place, copy first
+
+    # return thumb
     thumb.save(buf, format="webp")
 
     return b64encode(buf.getvalue()).decode()
@@ -1070,26 +1091,6 @@ if __name__ == "__main__":
             only_tags=("fabricate", "deconstruct", "price", "inventoryicon", "sprite"),
         )
 
-    logtime("reading sprites")
-
-    sprites: dict[Identifier, str] = {}
-
-    if args.sprites:
-        for item in index.values():
-            sprite = item.sprite
-
-            if sprite is None:
-                continue
-
-            texture_path = find_texture_path_on_fs(args.sprites, sprite.texture)
-            if texture_path is None:
-                log_warning(
-                    "texture not found", path=sprite.texture, identifier=item.identifier
-                )
-                continue
-
-            sprites[item.identifier] = sprite_to_base64(texture_path, sprite.ltwh)
-
     logtime("reading processes from items")
 
     processes: list[Process] = []
@@ -1120,13 +1121,46 @@ if __name__ == "__main__":
                     part.combine_in_place(other)
                     del process.uses[i + 1 + j]
 
-    # TODO prune items that aren't referenced in any processes
+    logtime(f"orphaning orphans")
 
-    logtime(f"found {len(processes)} Process for {len(index)} items")
+    _unpruned_len = len(index)
+    index = {
+        k: item
+        for k, item in index.items()
+        if any(item.used_in(process) for process in processes)
+    }
+
+    logtime(f"{len(processes)} Process for {len(index)} (was {_unpruned_len}) items")
+
+    logtime("reading sprites")
+
+    sprites: dict[Identifier, "PIL.Image.Image"] = {}
+
+    if args.sprites:
+        # from PIL import Image
+        # sheet = Image.new()
+
+        for item in index.values():
+            sprite = item.sprite
+
+            if sprite is None:
+                continue
+
+            texture_path = find_texture_path_on_fs(args.sprites, sprite.texture)
+            if texture_path is None:
+                log_warning(
+                    "texture not found", path=sprite.texture, identifier=item.identifier
+                )
+                continue
+
+            sprites[item.identifier] = sprite_to_base64(texture_path, sprite.ltwh)
+
+        logtime(f"{len(sprites)}")
 
     logtime(f"i18n")
 
-    tags_to_localize = set() # set(chain.from_iterable(item.tags for item in index.values()))
+    tags_to_localize = set()  # type: ignore
+    # tags_to_localize = set(chain.from_iterable(item.tags for item in index.values()))
     i18n: dict[str, dict[str, str]] = {}
 
     for path, doc in load_xml_rglob(args.texts, "*/*.xml"):
@@ -1146,8 +1180,9 @@ if __name__ == "__main__":
         for child in skip_comments(root):
 
             tag = child.tag.lower()
-            plain = drop_prefix(tag, "entityname.") \
-                 or drop_prefix(tag, "npctitle.") # merchants
+            plain = drop_prefix(tag, "entityname.") or drop_prefix(
+                tag, "npctitle."
+            )  # merchants
             #     or drop_prefix(tag, 'fabricationdescription.') # tags like munition_core
             if not plain:
                 continue
