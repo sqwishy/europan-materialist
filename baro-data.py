@@ -1,7 +1,6 @@
 import io
 import json
 import os
-import pathlib
 import re
 import sys
 from base64 import b64encode
@@ -11,6 +10,7 @@ from graphlib import TopologicalSorter
 from itertools import count, chain
 from lxml import etree
 from operator import itemgetter
+from pathlib import Path
 from typing import (
     Union,
     NewType,
@@ -90,15 +90,19 @@ IDENTIFIER_PATTERN = re.compile("[a-z0-9\._]+", flags=re.IGNORECASE)
 
 def make_identifier(value: str) -> Identifier:
     value = value.strip()
+
     if IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise ValueError(value)
+
     return Identifier(":" + value)
 
 
 def make_tag(value: str) -> Tag:
     value = value.strip()
+
     if IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise ValueError(value)
+
     return Tag("#" + value)
 
 
@@ -209,6 +213,9 @@ class Tagged(object):
 class Error(Exception):
     def __init__(self, **kwargs):
         super().__init__(kwargs)
+
+    def as_warning(self) -> Warning:
+        raise NotImplementedError
 
 
 class MissingAttribute(Error):
@@ -420,16 +427,11 @@ def extract_Sprite(el):
 
         yield Sprite(texture=attrs.use("texture"), ltwh=ltwh)
 
-    except MissingAttribute as err:
-        yield err.as_warning()
-
-    except BadValue as err:
+    except Error as err:
         yield err.as_warning()
 
 
-def extract_Item(
-    item,
-) -> Iterator[Process | Warning]:
+def extract_Item(item) -> Iterator[Process | Warning]:
     for el in skip_comments(item):
         tag = el.tag.lower()
 
@@ -443,7 +445,7 @@ def extract_Item(
             elif tag == "price":
                 yield from extract_Price(el)
 
-        except MissingAttribute as err:
+        except Error as err:
             yield err.as_warning()
 
 
@@ -622,7 +624,7 @@ def extract_Deconstruct(el) -> Iterator[Process | Warning]:
                         yield Warning("item has no amount", item=item, element=child)
                 else:
                     yield item
-        except MissingAttribute as err:
+        except Error as err:
             yield err.as_warning()
 
     yield fab
@@ -774,10 +776,7 @@ def extract_Price(el) -> Iterator[Process | Warning]:
             if attrs.use("sold", convert=xmlbool, default=is_sold_by_stores_generally):
                 price.stations.extend(stations)
 
-        except MissingAttribute as err:
-            yield err.as_warning()
-
-        except BadValue as err:
+        except Error as err:
             yield err.as_warning()
 
         yield from attrs.warnings()
@@ -960,31 +959,19 @@ def sign(i: int):
 
 
 def rglobpaths(paths: list[str], glob: str):
-    for path in map(pathlib.Path, paths):
+    for path in map(Path, paths):
         if path.is_file():
             yield path
         else:
             yield from path.rglob(glob)
 
 
-def find_file(root: pathlib.Path, path: pathlib.Path):
-    """case insensitive file lookup
-
-    path is assumed to be relative to root and falls back to broader search
-    """
-    idk = root / path
-    if idk.exists():
-        return idk
-    print(root, path)
-    breakpoint()
+_path_cache: dict[str, dict[str, Path]] = {}
 
 
-_path_cache: dict[str, dict[str, pathlib.Path]] = {}
-
-
-def find_texture_path_on_fs(content: pathlib.Path, texture: str):
-    """root should be a path to barotrauma's Content directory"""
-    # - this pretty much has to be case-insensitive ...
+def find_texture_path_on_fs(content: Path, texture: str) -> Path | None:
+    """content should be a path to barotrauma's Content directory"""
+    # - this pretty much has to behave case-insensitive ...
     # - texture paths may be relative to the directory containing barotrauma's
     #   Content directory, so drop that prefix if we find it
 
@@ -992,7 +979,7 @@ def find_texture_path_on_fs(content: pathlib.Path, texture: str):
     # args.content root via .. or whatever
 
     # fmt: off
-    suffix = pathlib.Path(texture).suffix
+    suffix = Path(texture).suffix
     texture = texture.lower()
     texture = drop_prefix(texture, "content/") \
            or drop_prefix(texture, "content\\") \
@@ -1007,7 +994,9 @@ def find_texture_path_on_fs(content: pathlib.Path, texture: str):
 
     for nocasepath, fspath in haystack.items():
         if nocasepath.endswith(texture):
-            return fspath
+            return content / fspath
+
+    return None
 
 
 def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
@@ -1015,69 +1004,29 @@ def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     return (l, t, l + w, t + h)
 
 
-_sprite_cache: dict[str, "PIL.Image.Image"] = {}
+_sprite_cache: dict[Path, "PIL.Image.Image"] = {}
 
 
-def load_sprite_from_file(path, ltwh):
+def load_sprite_from_file(
+    path: Path, ltwh: tuple[int, int, int, int]
+) -> "PIL.Image.Image":
     from PIL import Image
 
     image = _sprite_cache.get(path)
     if image is None:
         image = _sprite_cache[path] = Image.open(path)
 
-    thumb = image.crop(ltwh_to_ltbr(ltwh))
-    thumb = thumb.crop(thumb.getbbox()).copy()  # auto-crop transparency
-    thumb.thumbnail((64, 64))  # thumbnail() is in-place, copy first
-
-    return thumb
+    image = image.crop(ltwh_to_ltbr(ltwh))  # crop to sprite in sheet
+    image = image.crop(image.getbbox())  # crop transparency
+    image = image.copy()  # thumbnail() is in-place returns None, copy first
+    image.thumbnail((64, 64))
+    return image
 
 
 def to_base64(image: "PIL.Image.Image", format="webp") -> str:
     buf = io.BytesIO()
     image.save(buf, format=format)
     return b64encode(buf.getvalue()).decode()
-
-
-# type SpriteAtlas: TypeAlias = list[tuple[str, int, int, "PIL.Image.Image"]]
-
-
-def make_atlas(
-    sprites_map: dict[str, "PIL.Image.Image"]
-) -> list[tuple[str, int, int, "PIL.Image.Image"]]:
-    # ) -> tuple[list[tuple[str, int, int]], "PIL.Image.Image"]:
-    # from PIL import Image
-
-    sheet_width = int(sum(i.width * i.height for i in sprites_map.values()) ** 0.5)
-    sprites = [tuple(i) for i in sprites_map.items()]
-    sprites.sort(key=lambda t: -t[1].height)
-    chart = []
-    l = t = row_height = sheet_height = 0
-
-    for key, image in sprites:
-
-        if l + image.width > sheet_width:  # wrap line
-            assert l and row_height
-            t += row_height
-            l = row_height = 0
-
-        if not row_height:
-            row_height = image.height
-            sheet_height += image.height
-
-        chart.append((key, l, t, image))
-
-        l += image.width
-
-    return chart
-
-    # sheet = Image.new("RGBA", (sheet_width, sheet_height))
-
-    # for ((_, l, t), (_, sprite)) in zip(chart, sprites):
-    #     sheet.paste(sprite, (l, t))
-
-    # sheet = sheet.crop(sheet.getbbox())
-
-    # return chart, sheet
 
 
 def load_xml_rglob(paths: list[str], glob: str):
@@ -1096,10 +1045,26 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser = ArgumentParser()
-    parser.add_argument("--items", nargs="+")
-    parser.add_argument("--texts", nargs="+")
-    parser.add_argument("--sprites", type=pathlib.Path)
     parser.add_argument("-n", "--dry-run", action="store_true", default=False)
+    parser.add_argument(
+        "--items", nargs="+", help="paths to find item xml data (Content/Items)"
+    )
+    parser.add_argument(
+        "--texts", nargs="+", help="paths to find localization xml data (Content/Texts)"
+    )
+    parser.add_argument(
+        "--sprites",
+        nargs="*",
+        type=Path,
+        help="search path for sprites (Content)",
+    )
+    parser.add_argument(
+        "write_sprites",
+        nargs="?",
+        type=Path,
+        help="path to write sprite sheet .css",
+    )
+    # parser.add_argument("output", nargs='?', default='-', type=Path, help="path to write .json")
 
     args = parser.parse_args()
 
@@ -1178,7 +1143,7 @@ if __name__ == "__main__":
                     part.combine_in_place(other)
                     del process.uses[i + 1 + j]
 
-    logtime(f"orphaning orphans")
+    logtime("orphaning orphans")
 
     _unpruned_len = len(index)
     index = {
@@ -1189,44 +1154,43 @@ if __name__ == "__main__":
 
     logtime(f"{len(processes)} Process for {len(index)} (was {_unpruned_len}) items")
 
-    logtime("reading sprites")
+    if args.write_sprites and args.sprites:
 
-    sprites: dict[Identifier, "PIL.Image.Image"] = {}
+        logtime("generating sprite css")
 
-    if args.sprites:
+        write_sprites = os.devnull if args.dry_run else args.write_sprites
 
-        for item in index.values():
-            sprite = item.sprite
+        with open(write_sprites, "w") as file:
 
-            if sprite is None:
-                continue
+            for item in index.values():
 
-            texture_path = find_texture_path_on_fs(args.sprites, sprite.texture)
-            if texture_path is None:
-                log_warning(
-                    "texture not found", path=sprite.texture, identifier=item.identifier
-                )
-                continue
+                if item.sprite is None:
+                    continue
 
-            sprites[item.identifier] = load_sprite_from_file(texture_path, sprite.ltwh)
+                for sprite_path in args.sprites:
+                    texture_path = find_texture_path_on_fs(
+                        sprite_path, item.sprite.texture
+                    )
+                    if texture_path is not None:
+                        break
 
-        logtime(f"{len(sprites)}")
+                else:
+                    log_warning(
+                        "texture not found",
+                        path=item.sprite.texture,
+                        identifier=item.identifier,
+                    )
+                    continue
 
-        with open("/tmp/sprite-sheet.css", "w") as css:
-            for name, image in sprites.items():
+                image = load_sprite_from_file(texture_path, item.sprite.ltwh)
+
                 print(
                     '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
-                    % (name, to_base64(image)),
-                    file=css,
+                    % (item.identifier, to_base64(image)),
+                    file=file,
                 )
 
-        # chart, atlas = make_atlas(sprites)
-        # with open('/tmp/sprite-sheet.css', 'w') as css:
-        #     for [k, ] in chart
-        #     print('', file=css)
-        # atlas.save("/tmp/sprite-sheet.webp", format="webp")
-
-    logtime(f"i18n")
+    logtime("i18n")
 
     tags_to_localize = set()  # type: ignore
     # tags_to_localize = set(chain.from_iterable(item.tags for item in index.values()))
@@ -1260,18 +1224,27 @@ if __name__ == "__main__":
             # this is a little weird, some things like "fabricator" are tags
             # and entities, but both receive the same localization? FIXME
             # tags_to_localize is empty above to skip this
+            # FIXME localize keys should probably be unprefixed barotrauma-like identifiers
 
             try:
                 if (tag := make_tag(plain)) in tags_to_localize:
-                    assert child.text is not None
+
+                    if child.text is None:
+                        raise ValueError(child.text)
+
                     dictionary[tag] = child.text
+
             except ValueError as err:
                 log_warning("funny l10n value", err=err)
 
             try:
                 if (identifier := make_identifier(plain)) in index:
-                    assert child.text is not None
+
+                    if child.text is None:
+                        raise ValueError(child.text)
+
                     dictionary[identifier] = child.text
+
             except ValueError as err:
                 log_warning("funny l10n value", err=err)
 
@@ -1286,7 +1259,6 @@ if __name__ == "__main__":
             },
             "procs": processes,
             "i18n": i18n,
-            "sprites": {},  # sprites,
         }
         try:
             json.dump(dumpme, default=serialize_dataclass, fp=sys.stdout)
