@@ -85,7 +85,7 @@ Money = NewType("Money", str)
 
 RequiredSkill: TypeAlias = dict[Identifier, float]
 
-IDENTIFIER_PATTERN = re.compile("[a-z0-9\._]+", flags=re.IGNORECASE)
+IDENTIFIER_PATTERN = re.compile(r"[a-z0-9\._]+", flags=re.IGNORECASE)
 
 
 def make_identifier(value: str) -> Identifier:
@@ -104,6 +104,20 @@ def make_tag(value: str) -> Tag:
         raise ValueError(value)
 
     return Tag("#" + value)
+
+
+def to_barotrauma_identifier(value: Tag | Identifier) -> str:
+    """
+    >>> make_tag("fabricator")
+    '#fabricator'
+    >>> to_barotrauma_identifier(_)
+    'fabricator'
+    >>> make_identifier(_)
+    ':fabricator'
+    >>> to_barotrauma_identifier(_)
+    'fabricator'
+    """
+    return value[1:]
 
 
 def split_tag_list(value: str) -> list[Tag]:
@@ -1192,9 +1206,15 @@ if __name__ == "__main__":
 
     logtime("i18n")
 
-    tags_to_localize = set()  # type: ignore
-    # tags_to_localize = set(chain.from_iterable(item.tags for item in index.values()))
-    i18n: dict[str, dict[str, str]] = {}
+    # {language: {identifier: humantext}}
+    i18n: dict[str, dict[str, str] | None] = {}
+
+    should_localize: set[str] = set()
+    for item in index.values():
+        should_localize.add(to_barotrauma_identifier(item.identifier))
+        should_localize.update(map(to_barotrauma_identifier, item.tags))
+    for process in processes:
+        should_localize.update(map(to_barotrauma_identifier, process.stations))
 
     for path, doc in load_xml_rglob(args.texts, "*/*.xml"):
 
@@ -1214,39 +1234,33 @@ if __name__ == "__main__":
 
             # fmt: off
             tag = child.tag.lower()
-            plain = drop_prefix(tag, "entityname.") \
-                 or drop_prefix(tag, "npctitle.") # merchants
-            #     or drop_prefix(tag, 'fabricationdescription.') # tags like munition_core
-            if not plain:
+            msg = (   drop_prefix(tag, "entityname.")
+                   or drop_prefix(tag, "npctitle.") # merchants
+                   or drop_prefix(tag, 'fabricationdescription.')) # munition_core etc
+            if not msg:
                 continue
             # fmt: on
 
-            # this is a little weird, some things like "fabricator" are tags
-            # and entities, but both receive the same localization? FIXME
-            # tags_to_localize is empty above to skip this
-            # FIXME localize keys should probably be unprefixed barotrauma-like identifiers
+            if msg not in should_localize:
+                continue
 
-            try:
-                if (tag := make_tag(plain)) in tags_to_localize:
+            if child.text is None:
+                raise ValueError(child.text)
 
-                    if child.text is None:
-                        raise ValueError(child.text)
+            if (current := dictionary.get(msg)) is not None and current != child.text:
+                log_warning(
+                    "l10n duplicate",
+                    language=language,
+                    msg=msg,
+                    current=current,
+                    update=child.text,
+                )
 
-                    dictionary[tag] = child.text
+            dictionary[msg] = child.text
 
-            except ValueError as err:
-                log_warning("funny l10n value", err=err)
-
-            try:
-                if (identifier := make_identifier(plain)) in index:
-
-                    if child.text is None:
-                        raise ValueError(child.text)
-
-                    dictionary[identifier] = child.text
-
-            except ValueError as err:
-                log_warning("funny l10n value", err=err)
+    for language, dictionary in i18n.items():
+        if (not_found := should_localize - set(dictionary.keys())):
+            log_warning("l10n not found", language=language, not_found=not_found)
 
     for lang, dictionary in i18n.items():
         logtime(f"{len(dictionary)} in {lang}")
