@@ -137,6 +137,7 @@ export const Page = () => {
 
 function Process({ proc } : { proc: Data.Process }) {
   const { time, stations, uses, needs_recipe, description } = proc;
+  // const [station, ...otherStations] = stations;
   const [localize] = useContext(Locale)
   return (
     <div class="process">
@@ -145,13 +146,24 @@ function Process({ proc } : { proc: Data.Process }) {
 
       {/* station and time */} 
       <div class="item stations">
-        <Show when={time}>
-          <span class="time">⏱️ {proc.time}s</span>
-        </Show>
-        <For each={stations}>
+        <span class="time">
+          <Show when={time}>
+            ⏱️ {proc.time}s
+          </Show>
+        </span>
+        <For each={stations.slice(0,1)}>
           {(station) => <><span class="station">{localize(station)}</span><Sprite what={station}/></>}
         </For>
       </div>
+      <For each={stations.slice(1)}>
+        {(station) => (
+          <div class="item stations">
+            <span class="time"><i>or</i></span>
+            <span class="station">{localize(station)}</span>
+            <Sprite what={station}/>
+          </div>
+        )}
+      </For>
 
       {/* parts produced */}
       <UsesList uses={uses.filter(({ amount }) => amount >= 0)} />
@@ -209,13 +221,14 @@ function Part({ part } : { part: Data.Part }) {
 
 function Sprite(props: { what: Data.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
   const [self, rest] = splitProps(props, ["what", "class"]);
-  const [sprite] = useContext(Sprites)
+  // const [sprite] = useContext(Sprites)
   return (
-    <Show when={sprite(self.what)} keyed>
-      {(data) => <span class={`sprite ${self.class || ''}`} {...rest}>
-        <img src={`data:image/webp;base64,${data}`}/>
-      </span>}
-    </Show>
+    <span class={`sprite ${self.class || ''}`} {...rest} data-sprite={self.what} />
+    // <Show when={sprite(self.what)} keyed>
+    //   {(data) => <span class={`sprite ${self.class || ''}`} {...rest}>
+    //     <img src={`data:image/webp;base64,${data}`}/>
+    //   </span>}
+    // </Show>
   )
 }
 

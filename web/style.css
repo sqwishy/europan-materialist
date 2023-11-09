@@ -120,9 +120,14 @@ p,
 
 /* this feels really dirty; alternatively, generate a css file with a css class
  * per sprite that uses background-image */
+/* .item .sprite */
+/*   { position: relative; flex-basis: 48px } */
+/* .item .sprite img */
+/*   { position: absolute; margin: auto; */
+/*     top: 0; right: 0; bottom: 0; left: 0; */
+/*     max-height: 100%; max-width: 100% } */
 .item .sprite
-  { position: relative; flex-basis: 48px }
-.item .sprite img
-  { position: absolute; margin: auto;
-    top: 0; right: 0; bottom: 0; left: 0;
-    max-height: 100%; max-width: 100% }
+           { flex-basis: 48px;
+    background-position: center;
+        background-size: contain;
+      background-repeat: no-repeat }

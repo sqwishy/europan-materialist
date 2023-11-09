@@ -85,15 +85,19 @@ Money = NewType("Money", str)
 
 RequiredSkill: TypeAlias = dict[Identifier, float]
 
+IDENTIFIER_PATTERN = re.compile("[a-z0-9\._]+", flags=re.IGNORECASE)
+
 
 def make_identifier(value: str) -> Identifier:
-    if not value:
+    value = value.strip()
+    if IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise ValueError(value)
     return Identifier(":" + value)
 
 
 def make_tag(value: str) -> Tag:
-    if not value:
+    value = value.strip()
+    if IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise ValueError(value)
     return Tag("#" + value)
 
@@ -202,13 +206,18 @@ class Tagged(object):
     tags: list[Tag]
 
 
-class MissingAttribute(Exception):
+class Error(Exception):
+    def __init__(self, **kwargs):
+        super().__init__(kwargs)
+
+
+class MissingAttribute(Error):
     def as_warning(self) -> Warning:
         (args,) = self.args
         return warn_missing_attribute(**args)
 
 
-class BadValue(Exception):
+class BadValue(Error):
     def as_warning(self) -> Warning:
         (args,) = self.args
         return warn_bad_value(**args)
@@ -278,6 +287,9 @@ def format_log_value(v, path):
         )
 
     elif is_dataclass(v):
+        return repr(v)
+
+    elif isinstance(v, Exception):
         return repr(v)
 
     else:
@@ -360,6 +372,7 @@ def index_document(doc) -> Iterator[BaroItem | Warning]:
                 )
             continue
 
+        # TODO we can't do this until after variants are figured out???
         found_sprite = None
         for something in flat_map(
             extract_Sprite, item.xpath("InventoryIcon") + item.xpath("Sprite")
@@ -375,15 +388,18 @@ def index_document(doc) -> Iterator[BaroItem | Warning]:
         # yield from attrs.warnings()
         attrs = Attribs.from_element(item)
 
-        yield BaroItem(
-            element=item,
-            identifier=attrs.use("identifier", convert=make_identifier),
-            nameidentifier=attrs.or_none("nameidentifier"),
-            tags=attrs.use("tags", convert=split_tag_list, default=[]),
-            variant_of=attrs.or_none("variantof", convert=make_identifier)
-            or attrs.or_none("inherit", convert=make_identifier),
-            sprite=found_sprite,
-        )
+        try:
+            yield BaroItem(
+                element=item,
+                identifier=attrs.use("identifier", convert=make_identifier),
+                nameidentifier=attrs.or_none("nameidentifier"),
+                tags=attrs.use("tags", convert=split_tag_list, default=[]),
+                variant_of=attrs.or_none("variantof", convert=make_identifier)
+                or attrs.or_none("inherit", convert=make_identifier),
+                sprite=found_sprite,
+            )
+        except Error as err:
+            yield err.as_warning()
 
 
 def extract_Sprite(el):
@@ -435,7 +451,7 @@ def extract_item_identifier(el) -> Identifier:
     identifier = el.get("identifier")
 
     if not identifier:
-        raise MissingAttribute(dict(attribute="identifier", element=el))
+        raise MissingAttribute(attribute="identifier", element=el)
 
     return make_identifier(identifier)
 
@@ -487,7 +503,7 @@ def extract_Fabricate(
 
                 else:
                     yield item
-        except MissingAttribute as err:
+        except Error as err:
             yield err.as_warning()
 
     yield res
@@ -510,7 +526,7 @@ def extract_Fabricate_Item(
         if what is None:
             what = attrs.or_none("tag", convert=make_tag)
         if what is None:
-            raise MissingAttribute(dict(attribute=("identifier", "tag"), element=el))
+            raise MissingAttribute(attribute=("identifier", "tag"), element=el)
 
         # this is an ingredient/required item. it is consumed
         # during fabrication, so the amount is negative
@@ -890,9 +906,7 @@ class Attribs(dict):
                 return self.__attribute_not_found  # returning "private" value FIXME
 
             elif default is self.__raise:
-                raise MissingAttribute(
-                    dict(attribute=attribute, element=self.__element)
-                )
+                raise MissingAttribute(attribute=attribute, element=self.__element)
 
             else:
                 return default
@@ -1004,23 +1018,66 @@ def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
 _sprite_cache: dict[str, "PIL.Image.Image"] = {}
 
 
-def sprite_to_base64(path, ltwh):
+def load_sprite_from_file(path, ltwh):
     from PIL import Image
 
     image = _sprite_cache.get(path)
     if image is None:
         image = _sprite_cache[path] = Image.open(path)
 
-    buf = io.BytesIO()
-
     thumb = image.crop(ltwh_to_ltbr(ltwh))
     thumb = thumb.crop(thumb.getbbox()).copy()  # auto-crop transparency
     thumb.thumbnail((64, 64))  # thumbnail() is in-place, copy first
 
-    # return thumb
-    thumb.save(buf, format="webp")
+    return thumb
 
+
+def to_base64(image: "PIL.Image.Image", format="webp") -> str:
+    buf = io.BytesIO()
+    image.save(buf, format=format)
     return b64encode(buf.getvalue()).decode()
+
+
+# type SpriteAtlas: TypeAlias = list[tuple[str, int, int, "PIL.Image.Image"]]
+
+
+def make_atlas(
+    sprites_map: dict[str, "PIL.Image.Image"]
+) -> list[tuple[str, int, int, "PIL.Image.Image"]]:
+    # ) -> tuple[list[tuple[str, int, int]], "PIL.Image.Image"]:
+    # from PIL import Image
+
+    sheet_width = int(sum(i.width * i.height for i in sprites_map.values()) ** 0.5)
+    sprites = [tuple(i) for i in sprites_map.items()]
+    sprites.sort(key=lambda t: -t[1].height)
+    chart = []
+    l = t = row_height = sheet_height = 0
+
+    for key, image in sprites:
+
+        if l + image.width > sheet_width:  # wrap line
+            assert l and row_height
+            t += row_height
+            l = row_height = 0
+
+        if not row_height:
+            row_height = image.height
+            sheet_height += image.height
+
+        chart.append((key, l, t, image))
+
+        l += image.width
+
+    return chart
+
+    # sheet = Image.new("RGBA", (sheet_width, sheet_height))
+
+    # for ((_, l, t), (_, sprite)) in zip(chart, sprites):
+    #     sheet.paste(sprite, (l, t))
+
+    # sheet = sheet.crop(sheet.getbbox())
+
+    # return chart, sheet
 
 
 def load_xml_rglob(paths: list[str], glob: str):
@@ -1137,8 +1194,6 @@ if __name__ == "__main__":
     sprites: dict[Identifier, "PIL.Image.Image"] = {}
 
     if args.sprites:
-        # from PIL import Image
-        # sheet = Image.new()
 
         for item in index.values():
             sprite = item.sprite
@@ -1153,9 +1208,23 @@ if __name__ == "__main__":
                 )
                 continue
 
-            sprites[item.identifier] = sprite_to_base64(texture_path, sprite.ltwh)
+            sprites[item.identifier] = load_sprite_from_file(texture_path, sprite.ltwh)
 
         logtime(f"{len(sprites)}")
+
+        with open("/tmp/sprite-sheet.css", "w") as css:
+            for name, image in sprites.items():
+                print(
+                    '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
+                    % (name, to_base64(image)),
+                    file=css,
+                )
+
+        # chart, atlas = make_atlas(sprites)
+        # with open('/tmp/sprite-sheet.css', 'w') as css:
+        #     for [k, ] in chart
+        #     print('', file=css)
+        # atlas.save("/tmp/sprite-sheet.webp", format="webp")
 
     logtime(f"i18n")
 
@@ -1179,25 +1248,32 @@ if __name__ == "__main__":
 
         for child in skip_comments(root):
 
+            # fmt: off
             tag = child.tag.lower()
-            plain = drop_prefix(tag, "entityname.") or drop_prefix(
-                tag, "npctitle."
-            )  # merchants
+            plain = drop_prefix(tag, "entityname.") \
+                 or drop_prefix(tag, "npctitle.") # merchants
             #     or drop_prefix(tag, 'fabricationdescription.') # tags like munition_core
             if not plain:
                 continue
+            # fmt: on
 
             # this is a little weird, some things like "fabricator" are tags
             # and entities, but both receive the same localization? FIXME
             # tags_to_localize is empty above to skip this
 
-            if (tag := make_tag(plain)) in tags_to_localize:
-                assert child.text is not None
-                dictionary[tag] = child.text
+            try:
+                if (tag := make_tag(plain)) in tags_to_localize:
+                    assert child.text is not None
+                    dictionary[tag] = child.text
+            except ValueError as err:
+                log_warning("funny l10n value", err=err)
 
-            elif (identifier := make_identifier(plain)) in index:
-                assert child.text is not None
-                dictionary[identifier] = child.text
+            try:
+                if (identifier := make_identifier(plain)) in index:
+                    assert child.text is not None
+                    dictionary[identifier] = child.text
+            except ValueError as err:
+                log_warning("funny l10n value", err=err)
 
     for lang, dictionary in i18n.items():
         logtime(f"{len(dictionary)} in {lang}")
@@ -1210,7 +1286,7 @@ if __name__ == "__main__":
             },
             "procs": processes,
             "i18n": i18n,
-            "sprites": sprites,
+            "sprites": {},  # sprites,
         }
         try:
             json.dump(dumpme, default=serialize_dataclass, fp=sys.stdout)
