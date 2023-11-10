@@ -18,8 +18,8 @@
 /*   --outline: var(--baro60); */
 /*      --page: var(--baro60); */
 /*      --text: var(--baro00); */
-/*      --consumed: var(--b-rd50); */
-/*      --produced: var(--b-bl50); } */
+/*  --consumed: var(--b-rd50); */
+/*  --produced: var(--b-bl50); } */
 
 body
   { font: medium/1.5 'Exo 2', 'IBM Plex Sans', sans-serif;
@@ -86,17 +86,20 @@ p,
 
 /* stations (Deconstructor/Fabricator) row */
 .item.stations
-  { background-color: var(--station);
-    color:       var(--gb96);
-    text-shadow: 1px 1px var(--gb24);
-    border:      1px solid var(--gb48);
-    box-shadow:  inset  1px  1px var(--gb-yellow49),
-                 inset -1px -1px var(--gb-yellow49)
-  }
+{ background-color: var(--station);
+             color: var(--gb96);
+       text-shadow: 1px   1px var(--gb24);
+            border: 1px solid var(--gb48);
+        box-shadow: inset  1px  1px var(--gb-yellow49),
+                    inset -1px -1px var(--gb-yellow49) }
+.item.stations + .item.stations { border-top: 0 }
 
 /* stack decoration under amount text */
 .item .decoration
-  { box-sizing: border-box; min-width: 24px; margin-right: -32px; margin-left: 8px }
+    { box-sizing: border-box;
+       min-width:  24px;
+     margin-left:   8px;
+    margin-right: -36px; }
 .item .decoration + .amount
   { z-index: 1 }
 

@@ -113,9 +113,9 @@ def what_variant(
     if value == "$":
         return None, None, value
     elif value.startswith(":"):
-        return value, None, None # type: ignore
+        return value, None, None  # type: ignore
     elif value.startswith("#"):
-        return None, value, None # type: ignore
+        return None, value, None  # type: ignore
     else:
         raise ValueError(value)
 
@@ -366,7 +366,6 @@ class BaroItem(object):
     nameidentifier: str | None
     variant_of: Identifier | None
     tags: list[Tag]
-    sprite: Sprite | None
 
     @property
     def is_variant(self) -> bool:
@@ -407,22 +406,12 @@ def index_document(doc) -> Iterator[BaroItem | Warning]:
                 )
             continue
 
-        # TODO we can't do this until after variants are figured out???
-        found_sprite = None
-        for something in flat_map(
-            extract_Sprite, item.xpath("InventoryIcon") + item.xpath("Sprite")
-        ):
-            if isinstance(something, Sprite):
-                found_sprite = something
-                break
-            else:
-                yield something
-
         # there are a lot of attributes on these elements,
         # we don't care to explicitly ignore them so don't
         # yield from attrs.warnings()
         attrs = Attribs.from_element(item)
 
+        # FIXME TODO the fields in might not be accurate if variantof is present ...
         try:
             yield BaroItem(
                 element=item,
@@ -431,13 +420,12 @@ def index_document(doc) -> Iterator[BaroItem | Warning]:
                 tags=attrs.use("tags", convert=split_tag_list, default=[]),
                 variant_of=attrs.or_none("variantof", convert=make_identifier)
                 or attrs.or_none("inherit", convert=make_identifier),
-                sprite=found_sprite,
             )
         except Error as err:
             yield err.as_warning()
 
 
-def extract_Sprite(el):
+def extract_Sprite(el) -> Iterator[Sprite | Warning]:
     attrs = Attribs.from_element(el)
 
     try:
@@ -454,7 +442,6 @@ def extract_Sprite(el):
         # fmt: on
 
         yield Sprite(texture=attrs.use("texture"), ltwh=ltwh)
-
     except Error as err:
         yield err.as_warning()
 
@@ -1072,27 +1059,15 @@ def load_xml_rglob(paths: list[str], glob: str):
 if __name__ == "__main__":
     from argparse import ArgumentParser
 
+    # fmt: off
     parser = ArgumentParser()
     parser.add_argument("-n", "--dry-run", action="store_true", default=False)
-    parser.add_argument(
-        "--items", nargs="+", help="paths to find item xml data (Content/Items)"
-    )
-    parser.add_argument(
-        "--texts", nargs="+", help="paths to find localization xml data (Content/Texts)"
-    )
-    parser.add_argument(
-        "--sprites",
-        nargs="*",
-        type=Path,
-        help="search path for sprites (Content)",
-    )
-    parser.add_argument(
-        "write_sprites",
-        nargs="?",
-        type=Path,
-        help="path to write sprite sheet .css",
-    )
+    parser.add_argument("--items", nargs="+", help="paths to find item xml data (Content/Items Content/Map)")
+    parser.add_argument("--texts", nargs="+", help="paths to find localization xml data (Content/Texts)")
+    parser.add_argument("--sprites", nargs="*", type=Path, help="search path for sprites (Content)")
+    parser.add_argument("write_sprites", nargs="?", type=Path, help="path to write sprite sheet .css")
     # parser.add_argument("output", nargs='?', default='-', type=Path, help="path to write .json")
+    # fmt: on
 
     args = parser.parse_args()
 
@@ -1184,37 +1159,40 @@ if __name__ == "__main__":
 
     if args.write_sprites and args.sprites:
 
+        logtime("finding sprites")
+
+        sprites: dict[Identifier, Sprite] = {}
+
+        for item in index.values():
+            els = (item.element.xpath("InventoryIcon") + item.element.xpath("Sprite"))
+            for sprite in log_warnings(flat_map(extract_Sprite, els)):
+                sprites[item.identifier] = sprite
+                break
+
         logtime("generating sprite css")
 
         write_sprites = os.devnull if args.dry_run else args.write_sprites
 
         with open(write_sprites, "w") as file:
 
-            for item in index.values():
-
-                if item.sprite is None:
-                    continue
+            for identifier, sprite in sprites.items():
 
                 for sprite_path in args.sprites:
-                    texture_path = find_texture_path_on_fs(
-                        sprite_path, item.sprite.texture
-                    )
+                    texture_path = find_texture_path_on_fs(sprite_path, sprite.texture)
                     if texture_path is not None:
                         break
 
                 else:
                     log_warning(
-                        "texture not found",
-                        path=item.sprite.texture,
-                        identifier=item.identifier,
+                        "texture not found", path=sprite.texture, identifier=identifier
                     )
                     continue
 
-                image = load_sprite_from_file(texture_path, item.sprite.ltwh)
+                image = load_sprite_from_file(texture_path, sprite.ltwh)
 
                 print(
                     '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
-                    % (item.identifier, to_base64(image)),
+                    % (identifier, to_base64(image)),
                     file=file,
                 )
 
@@ -1233,7 +1211,7 @@ if __name__ == "__main__":
             if identifier_:
                 if identifier_ not in index:
                     log_warning("you did a fucko wucko", identifier=identifier_)
-                elif (nameidentifier := index[identifier_].nameidentifier):
+                elif nameidentifier := index[identifier_].nameidentifier:
                     should_localize.add(nameidentifier)
                 else:
                     should_localize.add(to_barotrauma_identifier(identifier_))
