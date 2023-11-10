@@ -8,6 +8,7 @@
       --outline: var(--gb60);
          --page: var(--gb84);
          --text: var(--gb12);
+        --muted: var(--gb24);
       --station: var(--gb-yellow00);
      --consumed: var(--gb-orange49);
      --produced: var(--gb-green49); }
@@ -50,12 +51,15 @@ ul { margin: 0; padding: 0 }
 
 p,
 .process
-  { max-width: 44ch;
+  { max-width: 50ch;
     margin:    2ch 1ch }
 
-.process span
-  { padding:       0.3ch 0.4ch;
-    overflow:      hidden;
+.item span
+  { padding:   0.3ch 0.4ch; }
+.item .time,
+.item .condition,
+.item .amount
+  { overflow:      hidden;
     text-overflow: ellipsis;
     white-space:   nowrap }
 
@@ -65,7 +69,7 @@ p,
   { flex: 0 0 min-content }
 .item .amount,
 .item .time
-  { text-align: right; min-width: 5ch }
+  { text-align: right; min-width: 6ch; max-width: 6ch }
 .item .station,
 .item .what
   { flex: 1 1 max-content }
@@ -91,15 +95,20 @@ p,
        text-shadow: 1px   1px var(--gb24);
             border: 1px solid var(--gb48);
         box-shadow: inset  1px  1px var(--gb-yellow49),
-                    inset -1px -1px var(--gb-yellow49) }
+                    inset -1px -1px var(--gb-yellow49);
+           --muted: var(--gb-yellow98) }
 .item.stations + .item.stations { border-top: 0 }
 
 /* stack decoration under amount text */
 .item .decoration
+    { --inset:  8px;
+      --width: 24px }
+.item .decoration
     { box-sizing: border-box;
-       min-width:  24px;
-     margin-left:   8px;
-    margin-right: -36px; }
+       min-width: var(--width);
+       max-width: var(--width);
+     margin-left: var(--inset);
+    margin-right: calc(0px - var(--width) - var(--inset)) }
 .item .decoration + .amount
   { z-index: 1 }
 
@@ -110,10 +119,19 @@ p,
 .item .decoration
   { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%,
                        0 70%,  50% 90%, 100% 70%, 100% 100%, 0 100%) }
+.item .decoration
+  { --pointyness: 4px; --gap: 8px; --from-bottom: 4px;
+     --tail-vee: calc(100% - var(--from-bottom));
+    --tail-wing: calc(var(--tail-vee) - var(--pointyness));
+     --head-vee: calc(var(--tail-vee) - var(--gap));
+    --head-wing: calc(var(--tail-wing) - var(--gap)) }
+.item .decoration
+  { clip-path: polygon(0               0%,  100%               0,  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing),
+                       0 var(--tail-wing),   50% var(--tail-vee),  100% var(--tail-wing), 100%            100%,  0             100%) }
 
 /* stripe end */
 .item.produced:last-of-type .decoration
-  { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%) }
+  { clip-path: polygon(0  0%,  100%   0,  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing)) }
 
 /* stripe colors */
 .item.consumed .decoration
@@ -121,16 +139,13 @@ p,
 .item.produced .decoration
   { background-color: var(--produced) }
 
-/* this feels really dirty; alternatively, generate a css file with a css class
- * per sprite that uses background-image */
-/* .item .sprite */
-/*   { position: relative; flex-basis: 48px } */
-/* .item .sprite img */
-/*   { position: absolute; margin: auto; */
-/*     top: 0; right: 0; bottom: 0; left: 0; */
-/*     max-height: 100%; max-width: 100% } */
 .item .sprite
            { flex-basis: 48px;
     background-position: center;
         background-size: contain;
       background-repeat: no-repeat }
+/* to support not using white-space: nowrap everywhere? */
+.item .sprite
+  { align-self: center }
+code
+  { color: var(--muted) }

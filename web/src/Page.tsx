@@ -138,7 +138,6 @@ export const Page = () => {
 function Process({ proc } : { proc: Data.Process }) {
   const { time, stations, uses, needs_recipe, description } = proc;
   // const [station, ...otherStations] = stations;
-  const [localize] = useContext(Locale)
   return (
     <div class="process">
       {/* parts consumed */}
@@ -152,14 +151,19 @@ function Process({ proc } : { proc: Data.Process }) {
           </Show>
         </span>
         <For each={stations.slice(0,1)}>
-          {(station) => <><span class="station">{localize(station)}</span><Sprite what={station}/></>}
+          {(station) => (
+            <>
+              <span class="station"><Localized>{station}</Localized></span>
+              <Sprite what={station}/>
+            </>
+          )}
         </For>
       </div>
       <For each={stations.slice(1)}>
         {(station) => (
           <div class="item stations">
             <span class="time"><i>or</i></span>
-            <span class="station">{localize(station)}</span>
+            <span class="station"><Localized>{station}</Localized></span>
             <Sprite what={station}/>
           </div>
         )}
@@ -197,7 +201,6 @@ function UsesList({ uses } : { uses: (Data.WeightedRandomWithReplacement | Data.
 function Part({ part } : { part: Data.Part }) {
   const { what, amount, condition } = part;
   const [condition_min, condition_max] = condition || [null, null];
-  const [localize] = useContext(Locale)
   const [sprite] = useContext(Sprites)
   return (
     <div class="item part"
@@ -207,7 +210,7 @@ function Part({ part } : { part: Data.Part }) {
         <span class='amount' classList={{ 'amount-multiple': Math.abs(amount) > 1 }}>
           { amt(amount) }
         </span>
-      <span class='what'>{ localize(what) }</span>
+      <span class='what'><Localized>{ what }</Localized></span>
       <Show when={condition_min || condition_max}>
         <span class='condition'>
           { pct(condition_min) } ❤️ { pct(condition_max) }
@@ -223,7 +226,7 @@ function Sprite(props: { what: Data.Identifier } & JSX.HTMLAttributes<HTMLSpanEl
   const [self, rest] = splitProps(props, ["what", "class"]);
   // const [sprite] = useContext(Sprites)
   return (
-    <span class={`sprite ${self.class || ''}`} {...rest} data-sprite={self.what} />
+    <span class={`sprite ${self.class || ''}`} {...rest} data-sprite={self.what}>&emsp;</span>
     // <Show when={sprite(self.what)} keyed>
     //   {(data) => <span class={`sprite ${self.class || ''}`} {...rest}>
     //     <img src={`data:image/webp;base64,${data}`}/>
@@ -241,7 +244,7 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
       >
         <span class='decoration'></span>
         <span class='amount'>{ amount }</span>
-        <span class='what'>chosen at random</span>
+        <span class='what'>🎲 random</span>
       </div>
       {/* this ul kind of a hack so that last-of-type works */}
       <ul class="random-list">
@@ -251,4 +254,9 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
       </ul>
     </>
   )
+}
+
+function Localized({ children } : { children : Data.Identifier }) {
+  const [localize] = useContext(Locale);
+  return <>{localize(children.slice(1))} <code>{children}</code></>
 }
