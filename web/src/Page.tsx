@@ -1,5 +1,5 @@
 import { createSignal, createContext, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
-import { createStore, reconcile } from 'solid-js/store'
+import { createStore } from 'solid-js/store'
 import { Show, For } from 'solid-js/web'
 import * as Data from "./Data"
 
@@ -27,10 +27,6 @@ const applyFilter = (p: Data.Process, f: Filter) => (
 
 type Localize = (_: string) => string
 const Locale = createContext<[Localize]>([_ => _]);
-
-
-type GetSprite = (_: string) => string | null
-const Sprites = createContext<[GetSprite]>([_ => null]);
 
 
 export const Page = () => {
@@ -63,9 +59,6 @@ export const Page = () => {
   const localize: Localize = (text: string) => (   !resource.loading
                                                 && !resource.error
                                                 && (resource()?.i18n[getLanguage()] || {})[text] || text)
-  const getSprite: GetSprite = (i: string) => (   !resource.loading
-                                               && !resource.error
-                                               && (resource()?.sprites[i]) || null)
 
   return (
     <>
@@ -122,13 +115,11 @@ export const Page = () => {
       <Show when={resource.loading}>
         <p>loading</p>
       </Show>
-      <Sprites.Provider value={[getSprite]}>
-        <Locale.Provider value={[localize]}>
-          <For each={processes}>
-            {(proc) => <Process proc={proc} />}
-          </For>
-        </Locale.Provider>
-      </Sprites.Provider>
+      <Locale.Provider value={[localize]}>
+        <For each={processes}>
+          {(proc) => <Process proc={proc} />}
+        </For>
+      </Locale.Provider>
       <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p>
     </>
   );
@@ -162,7 +153,7 @@ function Process({ proc } : { proc: Data.Process }) {
       <For each={stations.slice(1)}>
         {(station) => (
           <div class="item stations">
-            <span class="time"><i>or</i></span>
+            <span class="time"></span>
             <span class="station"><Localized>{station}</Localized></span>
             <Sprite what={station}/>
           </div>
@@ -178,7 +169,7 @@ function Process({ proc } : { proc: Data.Process }) {
             <span>🧠 requires recipe</span>
           </Show>
           <Show when={description}>
-            <span>🫘 {description}</span>
+            <span>👉 {description}</span>
           </Show>
         </span>
       </Show>
@@ -201,7 +192,6 @@ function UsesList({ uses } : { uses: (Data.WeightedRandomWithReplacement | Data.
 function Part({ part } : { part: Data.Part }) {
   const { what, amount, condition } = part;
   const [condition_min, condition_max] = condition || [null, null];
-  const [sprite] = useContext(Sprites)
   return (
     <div class="item part"
          classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}
@@ -224,14 +214,8 @@ function Part({ part } : { part: Data.Part }) {
 
 function Sprite(props: { what: Data.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
   const [self, rest] = splitProps(props, ["what", "class"]);
-  // const [sprite] = useContext(Sprites)
   return (
     <span class={`sprite ${self.class || ''}`} {...rest} data-sprite={self.what}>&emsp;</span>
-    // <Show when={sprite(self.what)} keyed>
-    //   {(data) => <span class={`sprite ${self.class || ''}`} {...rest}>
-    //     <img src={`data:image/webp;base64,${data}`}/>
-    //   </span>}
-    // </Show>
   )
 }
 

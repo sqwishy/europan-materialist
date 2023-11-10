@@ -23,7 +23,7 @@
 /*  --produced: var(--b-bl50); } */
 
 body
-  { font: medium/1.5 'Exo 2', 'IBM Plex Sans', sans-serif;
+  { font: medium/1.35 'Exo 2', 'IBM Plex Sans', sans-serif;
     background-color: var(--page);
     color:            var(--text);
     margin: 0 }
@@ -96,7 +96,7 @@ p,
             border: 1px solid var(--gb48);
         box-shadow: inset  1px  1px var(--gb-yellow49),
                     inset -1px -1px var(--gb-yellow49);
-           --muted: var(--gb-yellow98) }
+           --muted: var(--gb84) }
 .item.stations + .item.stations { border-top: 0 }
 
 /* stack decoration under amount text */
@@ -117,17 +117,15 @@ p,
 
 /* stripe repeating */
 .item .decoration
-  { clip-path: polygon(0  0%, 100%   0, 100% 40%,  50%  60%, 0  40%,
-                       0 70%,  50% 90%, 100% 70%, 100% 100%, 0 100%) }
-.item .decoration
   { --pointyness: 4px; --gap: 8px; --from-bottom: 4px;
-     --tail-vee: calc(100% - var(--from-bottom));
+    --tail-vee:  calc(100% - var(--from-bottom));
     --tail-wing: calc(var(--tail-vee) - var(--pointyness));
-     --head-vee: calc(var(--tail-vee) - var(--gap));
+    --head-vee:  calc(var(--tail-vee) - var(--gap));
     --head-wing: calc(var(--tail-wing) - var(--gap)) }
+/* calc(100% + 1px) helps prevent a funny horizontal line, still shows up a lot on edge */
 .item .decoration
-  { clip-path: polygon(0               0%,  100%               0,  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing),
-                       0 var(--tail-wing),   50% var(--tail-vee),  100% var(--tail-wing), 100%            100%,  0             100%) }
+  { clip-path: polygon(0               0%,  100%               0,  100% var(--head-wing),   50% var(--head-vee),   0 var(--head-wing),
+                       0 var(--tail-wing),   50% var(--tail-vee),  100% var(--tail-wing),  100% calc(100% + 1px),  0 calc(100% + 1px)) }
 
 /* stripe end */
 .item.produced:last-of-type .decoration

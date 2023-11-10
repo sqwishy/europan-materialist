@@ -1034,7 +1034,7 @@ def load_sprite_from_file(
     image = image.crop(ltwh_to_ltbr(ltwh))  # crop to sprite in sheet
     image = image.crop(image.getbbox())  # crop transparency
     image = image.copy()  # thumbnail() is in-place returns None, copy first
-    image.thumbnail((64, 64))
+    image.thumbnail((48, 48))
     return image
 
 

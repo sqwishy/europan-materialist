@@ -26,7 +26,6 @@ export type Stuff = {
   tags_by_identifier: Record<Identifier, Tag[]>,
   procs: Process[],
   i18n: Record<string, Record<string, string>>,
-  sprites: Record<string, string>,
 }
 
 export async function fetchStuff(): Promise<Stuff> {
