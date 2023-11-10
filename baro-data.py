@@ -19,6 +19,7 @@ from typing import (
     Iterator,
     overload,
     TypeVar,
+    Literal,
     TYPE_CHECKING,
 )
 from types import MappingProxyType
@@ -81,7 +82,7 @@ Identifier = NewType("Identifier", str)
 
 Tag = NewType("Tag", str)
 
-Money = NewType("Money", str)
+Money: TypeAlias = Literal["$"]
 
 RequiredSkill: TypeAlias = dict[Identifier, float]
 
@@ -104,6 +105,19 @@ def make_tag(value: str) -> Tag:
         raise ValueError(value)
 
     return Tag("#" + value)
+
+
+def what_variant(
+    value: Identifier | Tag | Money,
+) -> tuple[Identifier | None, Tag | None, Money | None]:
+    if value == "$":
+        return None, None, value
+    elif value.startswith(":"):
+        return value, None, None # type: ignore
+    elif value.startswith("#"):
+        return None, value, None # type: ignore
+    else:
+        raise ValueError(value)
 
 
 def to_barotrauma_identifier(value: Tag | Identifier) -> str:
@@ -139,7 +153,7 @@ def split_int_pair(value: str) -> tuple[int, int]:
 
 
 def money() -> Money:
-    return Money("$")
+    return "$"
 
 
 def xmlbool(value: str) -> bool:
@@ -204,7 +218,7 @@ class Process(object):
     # see displayname.{description} in localization strings?
     description: str | None = None
 
-    def _iter_parts(self) -> Iterator[Part]:
+    def iter_parts(self) -> Iterator[Part]:
         for uses in self.uses:
             if isinstance(uses, RandomChoices):
                 yield from uses.weighted_random_with_replacement
@@ -362,7 +376,7 @@ class BaroItem(object):
         return (
             any(
                 self.identifier == part.what or part.what in self.tags
-                for part in process._iter_parts()
+                for part in process.iter_parts()
             )
             or self.identifier in process.stations
         )
@@ -1207,14 +1221,24 @@ if __name__ == "__main__":
     logtime("i18n")
 
     # {language: {identifier: humantext}}
-    i18n: dict[str, dict[str, str] | None] = {}
+    i18n: dict[str, dict[str, str]] = {}
 
     should_localize: set[str] = set()
-    for item in index.values():
-        should_localize.add(to_barotrauma_identifier(item.identifier))
-        should_localize.update(map(to_barotrauma_identifier, item.tags))
     for process in processes:
         should_localize.update(map(to_barotrauma_identifier, process.stations))
+
+        for part in process.iter_parts():
+            # FIXME nasty
+            identifier_, tag_, _ = what_variant(part.what)
+            if identifier_:
+                if identifier_ not in index:
+                    log_warning("you did a fucko wucko", identifier=identifier_)
+                elif (nameidentifier := index[identifier_].nameidentifier):
+                    should_localize.add(nameidentifier)
+                else:
+                    should_localize.add(to_barotrauma_identifier(identifier_))
+            elif tag_:
+                should_localize.add(to_barotrauma_identifier(tag_))
 
     for path, doc in load_xml_rglob(args.texts, "*/*.xml"):
 
@@ -1259,7 +1283,7 @@ if __name__ == "__main__":
             dictionary[msg] = child.text
 
     for language, dictionary in i18n.items():
-        if (not_found := should_localize - set(dictionary.keys())):
+        if not_found := should_localize - set(dictionary.keys()):
             log_warning("l10n not found", language=language, not_found=not_found)
 
     for lang, dictionary in i18n.items():
