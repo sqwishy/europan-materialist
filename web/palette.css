@@ -9,49 +9,52 @@
 --solar84: #eee8d5;
 --solar96: #fdf6e3;
 
---solar-colors00: #b58900;
---solar-colors14: #cb4b16;
---solar-colors28: #dc322f;
---solar-colors42: #d33682;
---solar-colors56: #6c71c4;
---solar-colors70: #268bd2;
---solar-colors84: #2aa198;
---solar-colors98: #859900;
+--solar-yellow00: #484235;
+--solar-yellow24: #886817;
+--solar-yellow48: #b58900;
+--solar-yellow72: #d0a43c;
+--solar-yellow96: #daba74;
 
---solar-orange00: #332521;
---solar-orange24: #913713;
+--solar-orange00: #4d3f3a;
+--solar-orange24: #983d1b;
 --solar-orange48: #cb4b16;
---solar-orange72: #e06a40;
---solar-orange96: #d28a71;
+--solar-orange72: #ea7349;
+--solar-orange96: #f4a98f;
 
---solar-red00: #332523;
---solar-red24: #9d2723;
+--solar-red00: #4e3e3c;
+--solar-red24: #a42d29;
 --solar-red48: #dc322f;
---solar-red72: #ee5b51;
---solar-red96: #d4877e;
+--solar-red72: #f9655a;
+--solar-red96: #f6a69c;
 
---solar-green00: #282a1e;
---solar-green24: #617011;
---solar-green48: #859900;
---solar-green72: #91a52e;
---solar-green96: #98a760;
+--solar-pink00: #4c3e43;
+--solar-pink24: #9d2f62;
+--solar-pink48: #d33682;
+--solar-pink72: #f065a1;
+--solar-pink96: #f0a4c0;
 
---solar-blue00: #202a33;
---solar-blue24: #1f6597;
---solar-blue48: #268bd2;
---solar-blue72: #449ee3;
---solar-blue96: #69a5d6;
-
---solar-cyan00: #1c2c2b;
---solar-cyan24: #24766f;
---solar-cyan48: #2aa198;
---solar-cyan72: #3daea4;
---solar-cyan96: #4bb2a9;
-
---solar-violet00: #262834;
---solar-violet24: #4d518c;
+--solar-violet00: #40414e;
+--solar-violet24: #525792;
 --solar-violet48: #6c71c4;
---solar-violet72: #8289db;
---solar-violet96: #9198da;
+--solar-violet72: #8b92e6;
+--solar-violet96: #b0b8fb;
+
+--solar-blue00: #39444e;
+--solar-blue24: #25699c;
+--solar-blue48: #268bd2;
+--solar-blue72: #51aaf0;
+--solar-blue96: #88c5f8;
+
+--solar-cyan00: #354644;
+--solar-cyan24: #297973;
+--solar-cyan48: #2aa198;
+--solar-cyan72: #4fbdb4;
+--solar-cyan96: #6dd2c8;
+
+--solar-green00: #414437;
+--solar-green24: #657417;
+--solar-green48: #859900;
+--solar-green72: #a0b541;
+--solar-green96: #b7c77f;
 
 }

@@ -16,8 +16,8 @@
 :root
   { --panel: var(--solar84);
     --input: var(--solar84);
-  --outline: var(--solar60);
-     --page: var(--solar72);
+  --outline: var(--solar48);
+     --page: var(--solar60);
      --text: var(--solar00);
     --muted: var(--solar12);
   /* --station: var(--solar24); */
@@ -115,7 +115,7 @@ p,
        max-width: var(--width);
      margin-left: var(--inset);
     margin-right: calc(0px - var(--width) - var(--inset)) }
-.item .decoration + .amount
+.item .decoration + *
   { z-index: 1 }
 
 .item .amount.amount-multiple::after
@@ -138,20 +138,30 @@ p,
   { clip-path: polygon(0  0%,  100%   0,  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing)) }
 
 /* stripe colors */
+.item .decoration
+  { background-color: var(--solar72) }
 .item.consumed .decoration
   { background-color: var(--consumed) }
 .item.produced .decoration
   { background-color: var(--produced) }
 .item .decoration /* cute or cringe ??? */
-  { background-image: linear-gradient(to right, #ffffff00 50%, #ffffff20 50%) }
+  { background-image: linear-gradient(to right, #ffffff00 50%, #ffffff28 50%) }
 
 .item .sprite
            { flex-basis: 48px;
     background-position: center;
         background-size: contain;
-      background-repeat: no-repeat }
+      background-repeat: no-repeat;
+                padding: 0.3ch 0 }
 /* to support not using white-space: nowrap everywhere? */
 .item .sprite
   { align-self: center }
-code
+code.identifier
   { color: var(--muted) }
+code.identifier::before
+  { content: '<' }
+code.identifier::after
+  { content: '>' }
+
+.taglist
+  { flex-grow: 1 }

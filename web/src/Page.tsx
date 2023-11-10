@@ -32,7 +32,7 @@ const Locale = createContext<[Localize]>([_ => _]);
 export const Page = () => {
   const [resource] = createResource(Data.fetchStuff)
   const [getSearch, setSearch] = createSignal<Filter>('')
-  const [getLimit, setLimit] = createSignal<number>(200)
+  const [getLimit, setLimit] = createSignal<number>(20)
   const [getLanguage, setLanguage] = createSignal('English')
 
   const [processes, setProcesses] = createStore<Data.Process[]>([]);
@@ -55,6 +55,29 @@ export const Page = () => {
      * thought reconcile might be good but seems to not work */
     setProcesses(procs)
   });
+
+  const items = createMemo(() => {
+    if (   resource.loading
+        || resource.error
+        || !resource.latest)
+      return [];
+
+    let search: Filter;
+    let limit: number;
+    let items = Object.entries(resource.latest.tags_by_identifier);
+    const _filterFn =
+      ([identifier, tags]: [string /*Data.Identifier*/, Data.Tag[]]) => identifier.includes(search)
+                           || tags.some(t => t.includes(search));
+
+
+    if ((search = getSearch()).length)
+      items = items.filter(_filterFn)
+
+    if (limit = getLimit())
+      items = items.slice(0, limit)
+
+    return items
+  })
 
   const localize: Localize = (text: string) => (   !resource.loading
                                                 && !resource.error
@@ -116,6 +139,9 @@ export const Page = () => {
         <p>loading</p>
       </Show>
       <Locale.Provider value={[localize]}>
+        <For each={items()}>
+          {([identifier, tags]) => <Item identifier={identifier} tags={tags} />}
+        </For>
         <For each={processes}>
           {(proc) => <Process proc={proc} />}
         </For>
@@ -125,6 +151,22 @@ export const Page = () => {
   );
 };
 
+
+function Item({ identifier, tags } : { identifier: Data.Identifier, tags: Data.Tag[] }) {
+  return (
+      <div class="process">
+        <div class="item">
+          <span class="decoration"></span>
+          <span class="what"><Localized>{ identifier }</Localized></span>
+          <Sprite what={identifier} />
+        </div>
+        <div class="item">
+          <span class="decoration"/>
+          <span class="taglist">{tags.join(" ")}</span>
+        </div>
+      </div>
+  )
+}
 
 function Process({ proc } : { proc: Data.Process }) {
   const { time, stations, uses, needs_recipe, description } = proc;
@@ -240,7 +282,7 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
   )
 }
 
-function Localized({ children } : { children : Data.Identifier }) {
+function Localized({ children } : { children : Data.Identifier | Data.Tag }) {
   const [localize] = useContext(Locale);
-  return <>{localize(children.slice(1))} <code>{children}</code></>
+  return <>{localize(children)} <code class="identifier">{children}</code></>
 }

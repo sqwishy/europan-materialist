@@ -80,9 +80,9 @@ def logtime(message):
 
 Identifier = NewType("Identifier", str)
 
-Tag = NewType("Tag", str)
-
 Money: TypeAlias = Literal["$"]
+
+MONEY: Money = "$"
 
 RequiredSkill: TypeAlias = dict[Identifier, float]
 
@@ -95,47 +95,7 @@ def make_identifier(value: str) -> Identifier:
     if IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise ValueError(value)
 
-    return Identifier(":" + value)
-
-
-def make_tag(value: str) -> Tag:
-    value = value.strip()
-
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise ValueError(value)
-
-    return Tag("#" + value)
-
-
-def what_variant(
-    value: Identifier | Tag | Money,
-) -> tuple[Identifier | None, Tag | None, Money | None]:
-    if value == "$":
-        return None, None, value
-    elif value.startswith(":"):
-        return value, None, None  # type: ignore
-    elif value.startswith("#"):
-        return None, value, None  # type: ignore
-    else:
-        raise ValueError(value)
-
-
-def to_barotrauma_identifier(value: Tag | Identifier) -> str:
-    """
-    >>> make_tag("fabricator")
-    '#fabricator'
-    >>> to_barotrauma_identifier(_)
-    'fabricator'
-    >>> make_identifier(_)
-    ':fabricator'
-    >>> to_barotrauma_identifier(_)
-    'fabricator'
-    """
-    return value[1:]
-
-
-def split_tag_list(value: str) -> list[Tag]:
-    return [make_tag(s) for s in value.split(",") if s]
+    return Identifier(value)
 
 
 def split_identifier_list(value: str) -> list[Identifier]:
@@ -152,10 +112,6 @@ def split_int_pair(value: str) -> tuple[int, int]:
     return (a, s)
 
 
-def money() -> Money:
-    return "$"
-
-
 def xmlbool(value: str) -> bool:
     if value == "true":
         return True
@@ -169,7 +125,7 @@ def xmlbool(value: str) -> bool:
 class Part(object):
     """RequiredItem or any item output of Fabricate or money"""
 
-    what: Union[Identifier, Tag, Money]
+    what: Union[Identifier, Money]
     # positive if fabrication produces this item, negative if it consumes it
     amount: int
     # condition (like health or quality) required to be consumed or to be
@@ -235,7 +191,7 @@ class NeedsVariantOf(object):
 @dataclass
 class Tagged(object):
     identifier: Identifier
-    tags: list[Tag]
+    tags: list[Identifier]
 
 
 class Error(Exception):
@@ -365,7 +321,7 @@ class BaroItem(object):
     identifier: Identifier
     nameidentifier: str | None
     variant_of: Identifier | None
-    tags: list[Tag]
+    tags: list[Identifier]
 
     @property
     def is_variant(self) -> bool:
@@ -417,7 +373,7 @@ def index_document(doc) -> Iterator[BaroItem | Warning]:
                 element=item,
                 identifier=attrs.use("identifier", convert=make_identifier),
                 nameidentifier=attrs.or_none("nameidentifier"),
-                tags=attrs.use("tags", convert=split_tag_list, default=[]),
+                tags=attrs.use("tags", convert=split_identifier_list, default=[]),
                 variant_of=attrs.or_none("variantof", convert=make_identifier)
                 or attrs.or_none("inherit", convert=make_identifier),
             )
@@ -505,7 +461,7 @@ def extract_Fabricate(
 
     requiredmoney = attrs.opt("requiredmoney", convert=int)
     if requiredmoney:  # probably buying from a vending machine
-        res.uses.append(Part(what=money(), amount=-requiredmoney))
+        res.uses.append(Part(what=MONEY, amount=-requiredmoney))
 
     yield from attrs.warnings()
 
@@ -541,7 +497,7 @@ def extract_Fabricate_Item(
 
         what = attrs.or_none("identifier", convert=make_identifier)
         if what is None:
-            what = attrs.or_none("tag", convert=make_tag)
+            what = attrs.or_none("tag", convert=make_identifier)
         if what is None:
             raise MissingAttribute(attribute=("identifier", "tag"), element=el)
 
@@ -764,7 +720,7 @@ def extract_Price(el) -> Iterator[Process | Warning]:
     price = Process(
         stations=[],
         uses=[
-            Part(what=money(), amount=-1),
+            Part(what=MONEY, amount=-1),
             Part(what=extract_item_identifier(el.getparent()), amount=1),
         ],
         skills={},
@@ -1164,7 +1120,7 @@ if __name__ == "__main__":
         sprites: dict[Identifier, Sprite] = {}
 
         for item in index.values():
-            els = (item.element.xpath("InventoryIcon") + item.element.xpath("Sprite"))
+            els = item.element.xpath("InventoryIcon") + item.element.xpath("Sprite")
             for sprite in log_warnings(flat_map(extract_Sprite, els)):
                 sprites[item.identifier] = sprite
                 break
@@ -1203,20 +1159,16 @@ if __name__ == "__main__":
 
     should_localize: set[str] = set()
     for process in processes:
-        should_localize.update(map(to_barotrauma_identifier, process.stations))
+        should_localize.update(process.stations)
 
         for part in process.iter_parts():
-            # FIXME nasty
-            identifier_, tag_, _ = what_variant(part.what)
-            if identifier_:
-                if identifier_ not in index:
-                    log_warning("you did a fucko wucko", identifier=identifier_)
-                elif nameidentifier := index[identifier_].nameidentifier:
-                    should_localize.add(nameidentifier)
-                else:
-                    should_localize.add(to_barotrauma_identifier(identifier_))
-            elif tag_:
-                should_localize.add(to_barotrauma_identifier(tag_))
+            if part.what == MONEY:
+                continue
+            item = index.get(part.what)
+            if item and item.nameidentifier:
+                should_localize.add(item.nameidentifier)
+            else:
+                should_localize.add(part.what)
 
     for path, doc in load_xml_rglob(args.texts, "*/*.xml"):
 
