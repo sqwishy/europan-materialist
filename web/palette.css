@@ -1,66 +1,57 @@
 :root {
---baro00: #202725;
---baro12: #232b2a;
---baro24: #2e3636;
---baro36: #3f494a;
---baro48: #576365;
---baro60: #97b0b8;
---baro72: #bfd6e1;
---baro84: #e2f0fb;
---baro96: #f8f9fa;
+--solar00: #073642;
+--solar12: #3e5e67;
+--solar24: #586e75;
+--solar36: #657b83;
+--solar48: #839496;
+--solar60: #d1ccba;
+--solar72: #dfdac7;
+--solar84: #eee8d5;
+--solar96: #fdf6e3;
 
---b-rd50: #953e37;
+--solar-colors00: #b58900;
+--solar-colors14: #cb4b16;
+--solar-colors28: #dc322f;
+--solar-colors42: #d33682;
+--solar-colors56: #6c71c4;
+--solar-colors70: #268bd2;
+--solar-colors84: #2aa198;
+--solar-colors98: #859900;
 
---b-bl50: #2c8a96;
+--solar-orange00: #332521;
+--solar-orange24: #913713;
+--solar-orange48: #cb4b16;
+--solar-orange72: #e06a40;
+--solar-orange96: #d28a71;
 
---ayc00: #14191f;
---ayc12: #282e35;
---ayc24: #3e454d;
---ayc36: #555c66;
---ayc48: #6d7580;
---ayc60: #868f9b;
---ayc72: #a0aab7;
---ayc84: #bac6d4;
---ayc96: #d6e2f1;
+--solar-red00: #332523;
+--solar-red24: #9d2723;
+--solar-red48: #dc322f;
+--solar-red72: #ee5b51;
+--solar-red96: #d4877e;
 
---ayw00: #1b1811;
---ayw12: #302d25;
---ayw24: #47443a;
---ayw36: #5f5c50;
---ayw48: #787468;
---ayw60: #928e80;
---ayw72: #ada99a;
---ayw84: #c9c5b4;
---ayw96: #e6e1cf;
+--solar-green00: #282a1e;
+--solar-green24: #617011;
+--solar-green48: #859900;
+--solar-green72: #91a52e;
+--solar-green96: #98a760;
 
---gb00: #1d2021;
---gb12: #282828;
---gb24: #3c3836;
---gb36: #504945;
---gb48: #665c54;
---gb60: #bdae93;
---gb72: #d5c4a1;
---gb84: #ebdbb2;
---gb96: #fbf1c7;
+--solar-blue00: #202a33;
+--solar-blue24: #1f6597;
+--solar-blue48: #268bd2;
+--solar-blue72: #449ee3;
+--solar-blue96: #69a5d6;
 
---gb-red00: #9d0006;
---gb-red49: #cc241d;
---gb-red98: #fb4934;
+--solar-cyan00: #1c2c2b;
+--solar-cyan24: #24766f;
+--solar-cyan48: #2aa198;
+--solar-cyan72: #3daea4;
+--solar-cyan96: #4bb2a9;
 
---gb-blue00: #076678;
---gb-blue49: #458588;
---gb-blue98: #83a598;
-
---gb-green00: #79740e;
---gb-green49: #98971a;
---gb-green98: #b8bb26;
-
---gb-orange00: #af3a03;
---gb-orange49: #d65d0e;
---gb-orange98: #fe8019;
-
---gb-yellow00: #b57614;
---gb-yellow49: #d79921;
---gb-yellow98: #fabd2f;
+--solar-violet00: #262834;
+--solar-violet24: #4d518c;
+--solar-violet48: #6c71c4;
+--solar-violet72: #8289db;
+--solar-violet96: #9198da;
 
 }

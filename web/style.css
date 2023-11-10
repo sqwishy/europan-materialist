@@ -3,24 +3,26 @@
 @import url('https://fonts.googleapis.com/css2?family=Exo+2:ital@0;1&display=swap');
 
 :root
-      { --panel: var(--gb72);
-        --input: var(--gb72);
-      --outline: var(--gb60);
-         --page: var(--gb84);
-         --text: var(--gb12);
-        --muted: var(--gb24);
-      --station: var(--gb-yellow00);
-     --consumed: var(--gb-orange49);
-     --produced: var(--gb-green49); }
+  { --panel: var(--gb72);
+    --input: var(--gb72);
+  --outline: var(--gb60);
+     --page: var(--gb84);
+     --text: var(--gb12);
+    --muted: var(--gb24);
+  --station: var(--gb-yellow00);
+ --consumed: var(--gb-orange49);
+ --produced: var(--gb-green49); }
 
-/* :root */
-/*   { --panel: var(--baro72); */
-/*     --input: var(--baro72); */
-/*   --outline: var(--baro60); */
-/*      --page: var(--baro60); */
-/*      --text: var(--baro00); */
-/*  --consumed: var(--b-rd50); */
-/*  --produced: var(--b-bl50); } */
+:root
+  { --panel: var(--solar84);
+    --input: var(--solar84);
+  --outline: var(--solar60);
+     --page: var(--solar72);
+     --text: var(--solar00);
+    --muted: var(--solar12);
+  /* --station: var(--solar24); */
+ --consumed: var(--solar-red48);
+ --produced: var(--solar-cyan48); }
 
 body
   { font: medium/1.35 'Exo 2', 'IBM Plex Sans', sans-serif;
@@ -90,13 +92,17 @@ p,
 
 /* stations (Deconstructor/Fabricator) row */
 .item.stations
-{ background-color: var(--station);
-             color: var(--gb96);
-       text-shadow: 1px   1px var(--gb24);
-            border: 1px solid var(--gb48);
-        box-shadow: inset  1px  1px var(--gb-yellow49),
-                    inset -1px -1px var(--gb-yellow49);
-           --muted: var(--gb84) }
+{            color: var(--solar96);
+           --muted: var(--solar72);
+       text-shadow: 1px   1px var(--solar00);
+  background-color: var(--solar12);
+            border: 1px solid var(--solar00);
+        box-shadow: inset  1px  1px var(--solar24),
+                    inset -1px -1px var(--solar24) }
+  /* background-color: var(--solar-violet24); */
+  /*           border: 1px solid var(--solar-violet00); */
+  /*       box-shadow: inset  1px  1px var(--solar-violet48), */
+  /*                   inset -1px -1px var(--solar-violet48) } */
 .item.stations + .item.stations { border-top: 0 }
 
 /* stack decoration under amount text */
@@ -136,6 +142,8 @@ p,
   { background-color: var(--consumed) }
 .item.produced .decoration
   { background-color: var(--produced) }
+.item .decoration /* cute or cringe ??? */
+  { background-image: linear-gradient(to right, #ffffff00 50%, #ffffff20 50%) }
 
 .item .sprite
            { flex-basis: 48px;
