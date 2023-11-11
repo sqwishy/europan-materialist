@@ -66,7 +66,7 @@ export const Page = () => {
     let limit: number;
     let items = Object.entries(resource.latest.tags_by_identifier);
     const _filterFn =
-      ([identifier, tags]: [string /*Data.Identifier*/, Data.Tag[]]) => identifier.includes(search)
+      ([identifier, tags]: [string /*Data.Identifier*/, Data.Identifier[]]) => identifier.includes(search)
                            || tags.some(t => t.includes(search));
 
 
@@ -152,7 +152,7 @@ export const Page = () => {
 };
 
 
-function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data.Tag[] }) {
+function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data.Identifier[] }) {
   return (
       <div class="entity">
         <div class="item">
