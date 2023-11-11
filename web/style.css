@@ -26,25 +26,23 @@
  --produced: var(--solar-cyan48); }
 
 body
-  { font: 1rem/1.35 'Exo 2', sans-serif;
+  { font: 1rem/1.05 'Exo 2', sans-serif;
     background-color: var(--page);
     color:            var(--text);
     margin: 0 }
 
-a, input, button, textarea, select
+a, input, button, select
   { background:  transparent;
     color:       inherit;
     font:        inherit;
     text-align:  inherit;
     text-shadow: inherit }
 
-button, textarea, input, select
+button, input, select
   { background-color: var(--input);
     border:           1px solid var(--outline);
-    border-radius:    4px; }
-
-input, select
-  { padding:    0.3ch 0.4ch;
+    border-radius:    4px;
+    padding:    0.5ch 0.4ch;
     box-sizing: content-box; }
 
 button          { cursor: pointer; }
@@ -56,8 +54,8 @@ p, .entity, .process
   { max-width: 50ch;
     margin:    2ch 1ch }
 
-.item span
-  { padding:   0.3ch 0.4ch; }
+.item span /* vertical padding here coupled with .sprite padding */
+  { padding:   0.5ch 0.4ch; }
 .item .time,
 .item .condition,
 .item .amount
@@ -154,7 +152,7 @@ p, .entity, .process
     background-position: center;
         background-size: contain;
       background-repeat: no-repeat;
-                padding: 0.3ch 0 }
+                padding: 0.5ch 0 }
 /* to support not using white-space: nowrap everywhere? */
 .item .sprite
   { align-self: center }
