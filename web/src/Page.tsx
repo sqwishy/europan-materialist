@@ -140,7 +140,7 @@ export const Page = () => {
       </Show>
       <Locale.Provider value={[localize]}>
         <For each={items()}>
-          {([identifier, tags]) => <Item identifier={identifier} tags={tags} />}
+          {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
         </For>
         <For each={processes}>
           {(proc) => <Process proc={proc} />}
@@ -152,9 +152,9 @@ export const Page = () => {
 };
 
 
-function Item({ identifier, tags } : { identifier: Data.Identifier, tags: Data.Tag[] }) {
+function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data.Tag[] }) {
   return (
-      <div class="process">
+      <div class="entity">
         <div class="item">
           <span class="decoration"></span>
           <span class="what"><Localized>{ identifier }</Localized></span>
@@ -162,7 +162,12 @@ function Item({ identifier, tags } : { identifier: Data.Identifier, tags: Data.T
         </div>
         <div class="item">
           <span class="decoration"/>
-          <span class="taglist">{tags.join(" ")}</span>
+          <span class="taglist">
+            🏷️
+            <For each={tags}>
+              {(tag) => <Identifier>{ tag }</Identifier>}
+            </For>
+          </span>
         </div>
       </div>
   )
@@ -282,7 +287,11 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
   )
 }
 
-function Localized({ children } : { children : Data.Identifier | Data.Tag }) {
+function Localized({ children } : { children : Data.Identifier | Data.Money }) {
   const [localize] = useContext(Locale);
-  return <>{localize(children)} <code class="identifier">{children}</code></>
+  return <>{localize(children)} <Identifier>{children}</Identifier></>
+}
+
+function Identifier({ children } : { children : Data.Identifier }) {
+  return <a href="#" class="identifier">{children}</a>
 }

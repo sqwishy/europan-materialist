@@ -1,6 +1,7 @@
 @import "palette.css";
 
-@import url('https://fonts.googleapis.com/css2?family=Exo+2:ital@0;1&display=swap');
+/* @import url('https://fonts.googleapis.com/css2?family=Exo+2:ital@0;1&display=swap'); */
+@import url('https://fonts.googleapis.com/css2?family=Exo+2&family=IBM+Plex+Mono&display=swap');
 
 :root
   { --panel: var(--gb72);
@@ -16,8 +17,8 @@
 :root
   { --panel: var(--solar84);
     --input: var(--solar84);
-  --outline: var(--solar48);
-     --page: var(--solar60);
+  --outline: var(--solar60);
+     --page: var(--solar72);
      --text: var(--solar00);
     --muted: var(--solar12);
   /* --station: var(--solar24); */
@@ -25,7 +26,7 @@
  --produced: var(--solar-cyan48); }
 
 body
-  { font: medium/1.35 'Exo 2', 'IBM Plex Sans', sans-serif;
+  { font: 1rem/1.35 'Exo 2', sans-serif;
     background-color: var(--page);
     color:            var(--text);
     margin: 0 }
@@ -51,8 +52,7 @@ button:disabled { cursor: not-allowed }
 
 ul { margin: 0; padding: 0 }
 
-p,
-.process
+p, .entity, .process
   { max-width: 50ch;
     margin:    2ch 1ch }
 
@@ -115,6 +115,8 @@ p,
        max-width: var(--width);
      margin-left: var(--inset);
     margin-right: calc(0px - var(--width) - var(--inset)) }
+.entity .item .decoration
+  { margin-right: var(--inset) }
 .item .decoration + *
   { z-index: 1 }
 
@@ -139,7 +141,7 @@ p,
 
 /* stripe colors */
 .item .decoration
-  { background-color: var(--solar72) }
+  { background-color: var(--solar60) }
 .item.consumed .decoration
   { background-color: var(--consumed) }
 .item.produced .decoration
@@ -156,12 +158,14 @@ p,
 /* to support not using white-space: nowrap everywhere? */
 .item .sprite
   { align-self: center }
-code.identifier
-  { color: var(--muted) }
-code.identifier::before
-  { content: '<' }
-code.identifier::after
-  { content: '>' }
+a.identifier
+  { color: var(--muted);
+    font: 75% 'IBM Plex Mono', monospace;
+    text-decoration: none }
+/* .identifier::before, */
+/* .identifier::after  { vertical-align: 20%; font-size: 60% } */
+.identifier::before { content: '{' }
+.identifier::after  { content: '}' }
 
 .taglist
   { flex-grow: 1 }

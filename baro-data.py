@@ -1186,20 +1186,22 @@ if __name__ == "__main__":
 
         for child in skip_comments(root):
 
-            # fmt: off
+            if not child.text:
+                continue
+
             tag = child.tag.lower()
+
+            if tag == 'credit':
+                dictionary['$'] = child.text
+                continue
+
+            # fmt: off
             msg = (   drop_prefix(tag, "entityname.")
                    or drop_prefix(tag, "npctitle.") # merchants
                    or drop_prefix(tag, 'fabricationdescription.')) # munition_core etc
-            if not msg:
-                continue
             # fmt: on
-
             if msg not in should_localize:
                 continue
-
-            if child.text is None:
-                raise ValueError(child.text)
 
             if (current := dictionary.get(msg)) is not None and current != child.text:
                 log_warning(

@@ -1,9 +1,8 @@
-export type Identifier = `:${string}`;
-export type Tag = `#${string}`;
+export type Identifier = string;
 export type Money = "$";
 
 export type Part = {
-  what: Identifier | Tag | Money
+  what: Identifier | Money
   amount: number
   condition?: [number | null, number | null]
 }
@@ -23,7 +22,7 @@ export type Process = {
 }
 
 export type Stuff = {
-  tags_by_identifier: Record<Identifier, Tag[]>,
+  tags_by_identifier: Record<Identifier, Identifier[]>,
   procs: Process[],
   i18n: Record<string, Record<string, string>>,
 }
