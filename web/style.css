@@ -193,5 +193,13 @@ a.identifier
 .cmd .input-group span { padding: 0 1ch }
   
 
-footer
-  { max-width: 50ch; }
+html { min-height: 100% }
+body { min-height: 100vh }
+body { display: flex; flex-direction: column }
+main { flex-grow: 1 }
+footer { max-width: 50ch; justify-self: end }
+.loading-screen
+           { margin: 3ch auto;
+          font-size: large;
+  font-variant-caps: small-caps;
+          max-width: 20ch }

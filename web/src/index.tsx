@@ -1,4 +1,5 @@
 import { render } from 'solid-js/web';
-import { Page } from './Page';
+import { Router } from '@solidjs/router'
+import { LoadingScreen } from './Page';
 
-render(() => <Page />, document.body!);
+render(() => <Router><LoadingScreen /></Router>, document.body!);

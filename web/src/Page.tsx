@@ -1,5 +1,6 @@
 import { createSignal, createContext, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
 import { createStore } from 'solid-js/store'
+import { Route, A, useSearchParams } from '@solidjs/router'
 import { Show, For } from 'solid-js/web'
 import * as Data from "./Data"
 
@@ -8,11 +9,7 @@ const amt = (f: number) => f < -1
                          : f > 1
                          ? f
                          : '';
-
-
 const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
-
-
 const unreachable = (n: never): never => n;
 // const dbg = v => console.log(v) || v;
 
@@ -29,23 +26,53 @@ type Localize = (_: string) => string
 const Locale = createContext<[Localize]>([_ => _]);
 
 
-export const Page = () => {
+export const LoadingScreen = () => {
   const [resource] = createResource(Data.fetchStuff)
-  const [getSearch, setSearch] = createSignal<Filter>('')
-  const [getLimit, setLimit] = createSignal<number>(20)
+  return (
+    <>
+      <main>
+        <Show when={resource.loading}>
+          <div class="loading-screen">loading...</div>
+        </Show>
+        <Show when={resource.error}>
+          <div class="loading-screen"><strong>failed to load...</strong> {resource.error.toString()}</div>
+        </Show>
+        <Show when={!resource.loading && !resource.error && resource()} keyed>
+          {(stuff) => <Page stuff={stuff} />}
+        </Show>
+      </main>
+      <footer>
+        <p>
+          This site uses content and graphics from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>.
+          This is not endorsed or affiliated with Undertow Games.
+        </p>
+      </footer>
+    </>
+  )
+}
+
+export const Page = (props: { stuff: Data.Stuff }) => {
+  const [self, _] = splitProps(props, ["stuff"]);
+
   const [getLanguage, setLanguage] = createSignal('English')
+
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const getSearch = () => searchParams.q || ''
+  const setSearch = (q: string) => setSearchParams({ q })
+
+  const getLimit = () => parseInt(searchParams.limit, 10) || 20
+  const setLimit = (limit: number) => setSearchParams({ limit })
 
   const [processes, setProcesses] = createStore<Data.Process[]>([]);
 
   /* TODO how is the pagination meant to work with entity and process types???????? */
 
   createEffect(() => {
-    let processes, search: Filter, limit: number;
+    let search: Filter,
+        limit: number;
 
-    if (   resource.loading
-        || resource.error
-        || !(processes = resource.latest?.processes))
-      return setProcesses([]);
+    let processes = self.stuff.processes
 
     if ((search = getSearch()).length)
       processes = processes.filter((p) => applyFilter(p, search))
@@ -59,14 +86,9 @@ export const Page = () => {
   });
 
   const items = createMemo(() => {
-    if (   resource.loading
-        || resource.error
-        || !resource.latest)
-      return [];
-
     let search: Filter;
     let limit: number;
-    let items = Object.entries(resource.latest.tags_by_identifier);
+    let items = Object.entries(self.stuff.tags_by_identifier);
     const _filterFn =
       ([identifier, tags]: [string /*Data.Identifier*/, Data.Identifier[]]) => identifier.includes(search)
                            || tags.some(t => t.includes(search));
@@ -82,12 +104,7 @@ export const Page = () => {
   })
 
   const complete = createMemo(() => {
-    if (   resource.loading
-        || resource.error
-        || !resource.latest)
-      return [];
-
-    const { tags_by_identifier } = resource.latest;
+    const tags_by_identifier = self.stuff.tags_by_identifier;
     const allTags = Object.values(tags_by_identifier).flat();
     const allIdentifiers = allTags.concat(Object.keys(tags_by_identifier))
     return [...new Set(allIdentifiers)]
@@ -104,41 +121,32 @@ export const Page = () => {
       unreachable(update)
   };
 
-  const localize: Localize = (text: string) => (   !resource.loading
-                                                && !resource.error
-                                                && (resource()?.i18n[getLanguage()] || {})[text] || text)
+  const localize: Localize =
+    (text: string) => (self.stuff.i18n[getLanguage()] || {})[text] || text
 
   return (
     <>
       {/* language select */}
-      <Show when={!resource.loading && !resource.error && resource()} keyed>
-        {(stuff: Data.Stuff) => (
-          <p>
-            <select
-              onchange={(e) => setLanguage(e.currentTarget.value)}
-            >
-              <option value="">[no localization]</option>
-              <For each={Object.entries(stuff.i18n).sort()}>
-                {([language, dictionary]) => (
-                  <option
-                    value={language}
-                    selected={getLanguage()==language}
-                  >
-                    {dictionary[language] || language}
-                  </option>
-                )}
-              </For>
-            </select>
-          </p>
-        )}
-      </Show>
-      {/* stuff */}
-      <Show when={resource.error} keyed>
-        {({ message }) => <p>error: {message}</p>}
-      </Show>
-      <Show when={resource.loading}>
-        <p>loading</p>
-      </Show>
+        <p>
+          <select
+            onchange={(e) => setLanguage(e.currentTarget.value)}
+          >
+            <option value="">[no localization]</option>
+            <For each={Object.entries(self.stuff.i18n).sort()}>
+              {([language, dictionary]) => (
+                <option
+                  value={language}
+                  selected={getLanguage()==language}
+                >
+                  {dictionary[language] || language}
+                </option>
+              )}
+            </For>
+          </select>
+        </p>
+
+      {/* items / stuff list */}
+
       <Locale.Provider value={[localize]}>
         <For each={getSearch() ? items() : []}>
           {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
@@ -161,9 +169,6 @@ export const Page = () => {
         </For>
       </datalist>
 
-      <footer>
-        <p>This website uses content and graphics from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>. It is not endorsed by, affiliated with, or conspiring with Undertow Games.</p>
-      </footer>
     </>
   );
 };
@@ -346,5 +351,5 @@ function Localized({ children } : { children : Data.Identifier | Data.Money }) {
 }
 
 function Identifier({ children } : { children : Data.Identifier }) {
-  return <a href="#" class="identifier">{children}</a>
+  return <A href={`?q=${children}`} class="identifier">{children}</A>
 }
