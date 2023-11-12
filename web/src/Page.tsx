@@ -38,22 +38,22 @@ export const Page = () => {
   const [processes, setProcesses] = createStore<Data.Process[]>([]);
 
   createEffect(() => {
-    let procs, search: Filter, limit: number;
+    let processes, search: Filter, limit: number;
 
     if (   resource.loading
         || resource.error
-        || !(procs = resource.latest?.procs))
+        || !(processes = resource.latest?.processes))
       return setProcesses([]);
 
     if ((search = getSearch()).length)
-      procs = procs.filter((p) => applyFilter(p, search))
+      processes = processes.filter((p) => applyFilter(p, search))
 
     if (limit = getLimit())
-      procs = procs.slice(0, limit)
+      processes = processes.slice(0, limit)
 
     /* maybe using a store for this is silly,
      * thought reconcile might be good but seems to not work */
-    setProcesses(procs)
+    setProcesses(processes)
   });
 
   const items = createMemo(() => {
@@ -77,6 +77,18 @@ export const Page = () => {
       items = items.slice(0, limit)
 
     return items
+  })
+
+  const complete = createMemo(() => {
+    if (   resource.loading
+        || resource.error
+        || !resource.latest)
+      return [];
+
+    const { tags_by_identifier } = resource.latest;
+    const allTags = Object.values(tags_by_identifier).flat();
+    const allIdentifiers = allTags.concat(Object.keys(tags_by_identifier))
+    return [...new Set(allIdentifiers)]
   })
 
   const localize: Localize = (text: string) => (   !resource.loading
@@ -139,17 +151,48 @@ export const Page = () => {
         <p>loading</p>
       </Show>
       <Locale.Provider value={[localize]}>
-        <For each={items()}>
+        <For each={getSearch() ? items() : []}>
           {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
         </For>
         <For each={processes}>
           {(proc) => <Process proc={proc} />}
         </For>
       </Locale.Provider>
+
       <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p>
+
+      <Command update={setSearch} />
+
+      <datalist id="cmdcomplete">
+        <For each={complete()}>
+          {(value) => <option value={value} />}
+        </For>
+      </datalist>
+
+      <footer>
+        <p>This site uses content and graphics from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>. It is not endorsed, affiliated, or conspiring with Undertow Games.</p>
+      </footer>
     </>
   );
 };
+
+
+type Update = string;
+
+function Command(props: { update: (_: Update) => void }){
+  const [self, _] = splitProps(props, ["update"]);
+  return (
+    <div class="cmd">
+      <input
+        id="cmdline"
+        accessKey="k"
+        class="cmdline"
+        list="cmdcomplete"
+        onchange={(e) => self.update(e.currentTarget.value)}
+      />
+    </div>
+  )
+}
 
 
 function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data.Identifier[] }) {

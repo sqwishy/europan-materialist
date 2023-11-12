@@ -41,7 +41,7 @@ a, input, button, select
 button, input, select
   { background-color: var(--input);
     border:           1px solid var(--outline);
-    border-radius:    4px;
+    /* border-radius:    4px; */
     padding:    0.5ch 0.4ch;
     box-sizing: content-box; }
 
@@ -50,7 +50,7 @@ button:disabled { cursor: not-allowed }
 
 ul { margin: 0; padding: 0 }
 
-p, .entity, .process
+p, .entity, .process, footer, .cmd
   { max-width: 50ch;
     margin:    2ch 1ch }
 
@@ -167,3 +167,18 @@ a.identifier
 
 .taglist
   { flex-grow: 1 }
+
+.cmd
+  { position: sticky;
+      bottom: 1ch;
+     z-index: 1; }
+.cmd
+  {  display: flex;
+   max-width: 100% }
+.cmd input
+     { width: 100%;
+   --outline: var(--solar48);
+  box-shadow: 3px 3px var(--outline); }
+
+footer
+  { max-width: 50ch; }

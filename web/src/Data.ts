@@ -23,7 +23,7 @@ export type Process = {
 
 export type Stuff = {
   tags_by_identifier: Record<Identifier, Identifier[]>,
-  procs: Process[],
+  processes: Process[],
   i18n: Record<string, Record<string, string>>,
 }
 

@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from base64 import b64encode
+from collections import defaultdict
 from copy import copy
 from dataclasses import dataclass, is_dataclass, fields, field
 from graphlib import TopologicalSorter
@@ -78,122 +79,6 @@ def logtime(message):
     _LAST_TIME = monotonic_ns()
 
 
-Identifier = NewType("Identifier", str)
-
-Money: TypeAlias = Literal["$"]
-
-MONEY: Money = "$"
-
-RequiredSkill: TypeAlias = dict[Identifier, float]
-
-IDENTIFIER_PATTERN = re.compile(r"[a-z0-9\._]+", flags=re.IGNORECASE)
-
-
-def make_identifier(value: str) -> Identifier:
-    value = value.strip()
-
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise ValueError(value)
-
-    return Identifier(value)
-
-
-def split_identifier_list(value: str) -> list[Identifier]:
-    return [make_identifier(s) for s in value.split(",") if s]
-
-
-def split_ltwh(value: str) -> tuple[int, int, int, int]:
-    (a, s, d, f) = [int(v.strip()) for v in value.split(",", maxsplit=4)]
-    return (a, s, d, f)
-
-
-def split_int_pair(value: str) -> tuple[int, int]:
-    (a, s) = [int(v.strip()) for v in value.split(",", maxsplit=2)]
-    return (a, s)
-
-
-def xmlbool(value: str) -> bool:
-    if value == "true":
-        return True
-    elif value == "false":
-        return False
-    else:
-        raise ValueError(value)
-
-
-@dataclass
-class Part(object):
-    """RequiredItem or any item output of Fabricate or money"""
-
-    what: Union[Identifier, Money]
-    # positive if fabrication produces this item, negative if it consumes it
-    amount: int
-    # condition (like health or quality) required to be consumed or to be
-    # yielded? (CopyCondition and OutCondition{Min,Max} is used to specify
-    # condition of outputs/yielded items)
-    condition: tuple[float | None, float | None] = (None, None)
-
-    @property
-    def is_created(self):
-        return self.amount > 0
-
-    @property
-    def is_consumed(self):
-        return self.amount < 0
-
-    def can_combine(self, other: "Part") -> bool:
-        """combine amounts for the same part in the same direction"""
-        return (
-            self.what == other.what
-            and self.condition == other.condition
-            and sign(self.amount) == sign(other.amount)
-        )
-
-    def combine_in_place(self, other: "Part"):
-        self.amount += other.amount
-
-
-@dataclass
-class RandomChoices(object):
-    """barotrauma seems to do weighted random with replacement ..."""
-
-    weighted_random_with_replacement: list[Part]
-    amount: int
-
-
-@dataclass
-class Process(object):
-    """Fabricate / Deconstruct / Price"""
-
-    uses: list[Part | RandomChoices]
-    stations: list[Identifier]
-    skills: dict[Identifier, float]
-    time: float = 0.0
-    # see fabricatorrequiresrecipe in localization strings
-    needs_recipe: bool = False
-    # see displayname.{description} in localization strings?
-    description: str | None = None
-
-    def iter_parts(self) -> Iterator[Part]:
-        for uses in self.uses:
-            if isinstance(uses, RandomChoices):
-                yield from uses.weighted_random_with_replacement
-            else:
-                yield uses
-
-
-@dataclass
-class NeedsVariantOf(object):
-    identifier: Identifier
-    variantof: Identifier
-
-
-@dataclass
-class Tagged(object):
-    identifier: Identifier
-    tags: list[Identifier]
-
-
 class Error(Exception):
     def __init__(self, **kwargs):
         super().__init__(kwargs)
@@ -257,6 +142,51 @@ def log_warning(message, **kwargs):
             print(f"{prefix}{value}", file=sys.stderr)
 
 
+Identifier = NewType("Identifier", str)
+
+Money: TypeAlias = Literal["$"]
+
+MONEY: Money = "$"
+
+RequiredSkill: TypeAlias = dict[Identifier, float]
+
+IDENTIFIER_PATTERN = re.compile(r"[a-z0-9\._]+", flags=re.IGNORECASE)
+
+
+def make_identifier(value: str) -> Identifier:
+    # the game seems to use a lot of case insensitive stuff in Identifier.cs so
+    # lowercase these to normalize values
+    value = value.strip().lower()
+
+    if IDENTIFIER_PATTERN.fullmatch(value) is None:
+        raise ValueError(value)
+
+    return Identifier(value)
+
+
+def split_identifier_list(value: str) -> list[Identifier]:
+    return [make_identifier(s) for s in value.split(",") if s]
+
+
+def split_ltwh(value: str) -> tuple[int, int, int, int]:
+    (a, s, d, f) = [int(v.strip()) for v in value.split(",", maxsplit=4)]
+    return (a, s, d, f)
+
+
+def split_int_pair(value: str) -> tuple[int, int]:
+    (a, s) = [int(v.strip()) for v in value.split(",", maxsplit=2)]
+    return (a, s)
+
+
+def xmlbool(value: str) -> bool:
+    if value == "true":
+        return True
+    elif value == "false":
+        return False
+    else:
+        raise ValueError(value)
+
+
 def format_log_value(v, path):
     if isinstance(v, etree._Element):
         # etree.tostringlist does nothing interesting?
@@ -296,17 +226,91 @@ def _dedent_strings(strings):
 
 def serialize_dataclass(value):
     if is_dataclass(value):
-        return trim_asdict(value)
+        return dataclass_to_dict_without_defaults(value)
     else:
         raise TypeError(value)
 
 
-def trim_asdict(value):
+def dataclass_to_dict_without_defaults(value):
     return {
         field.name: getattr(value, field.name)
         for field in fields(value)
         if field.default != getattr(value, field.name)
     }
+
+
+@dataclass
+class Part(object):
+    """RequiredItem or any item output of Fabricate or money"""
+
+    what: Union[Identifier, Money]
+    # positive if fabrication produces this item, negative if it consumes it
+    amount: int
+    # condition (like health or quality) required to be consumed or to be
+    # yielded? (CopyCondition and OutCondition{Min,Max} is used to specify
+    # condition of outputs/yielded items)
+    condition: tuple[float | None, float | None] = (None, None)
+
+    @property
+    def is_created(self):
+        return self.amount > 0
+
+    @property
+    def is_consumed(self):
+        return self.amount < 0
+
+    def can_combine(self, other: "Part") -> bool:
+        """combine amounts for the same part in the same direction"""
+        return (
+            self.what == other.what
+            and self.condition == other.condition
+            and sign(self.amount) == sign(other.amount)
+        )
+
+    def combine_in_place(self, other: "Part"):
+        self.amount += other.amount
+
+
+@dataclass
+class RandomChoices(object):
+    """barotrauma seems to do weighted random with replacement ..."""
+
+    weighted_random_with_replacement: list[Part]
+    amount: int
+
+
+@dataclass
+class Process(object):
+    """Fabricate / Deconstruct / Price"""
+
+    id: str
+    uses: list[Part | RandomChoices]
+    stations: list[Identifier]
+    skills: dict[Identifier, float]
+    time: float = 0.0
+    # see fabricatorrequiresrecipe in localization strings
+    needs_recipe: bool = False
+    # see displayname.{description} in localization strings?
+    description: str | None = None
+
+    def iter_parts(self) -> Iterator[Part]:
+        for uses in self.uses:
+            if isinstance(uses, RandomChoices):
+                yield from uses.weighted_random_with_replacement
+            else:
+                yield uses
+
+
+@dataclass
+class NeedsVariantOf(object):
+    identifier: Identifier
+    variantof: Identifier
+
+
+@dataclass
+class Tagged(object):
+    identifier: Identifier
+    tags: list[Identifier]
 
 
 @dataclass
@@ -326,15 +330,6 @@ class BaroItem(object):
     @property
     def is_variant(self) -> bool:
         return self.variant_of is not None
-
-    def used_in(self, process: Process):
-        return (
-            any(
-                self.identifier == part.what or part.what in self.tags
-                for part in process.iter_parts()
-            )
-            or self.identifier in process.stations
-        )
 
 
 def index_document(doc) -> Iterator[BaroItem | Warning]:
@@ -381,6 +376,12 @@ def index_document(doc) -> Iterator[BaroItem | Warning]:
             yield err.as_warning()
 
 
+def extract_Sprite_under(el):
+    for child in skip_comments(el):
+        if child.tag.lower() in ("inventoryicon", "sprite"):
+            yield from extract_Sprite(child)
+
+
 def extract_Sprite(el) -> Iterator[Sprite | Warning]:
     attrs = Attribs.from_element(el)
 
@@ -402,19 +403,34 @@ def extract_Sprite(el) -> Iterator[Sprite | Warning]:
         yield err.as_warning()
 
 
+VOWEL_PATTERN = re.compile(r"[aeiou]", flags=re.IGNORECASE)
+
+
+def make_process_id(identifier: Identifier, tag: str, index: int):
+    # try not to use identifier characters for a separator
+    prefix = identifier[0] + VOWEL_PATTERN.sub("", identifier[1:])
+    return f"{prefix}/{tag[0]}{index:x}"
+
+
 def extract_Item(item) -> Iterator[Process | Warning]:
+    identifier = extract_item_identifier(item)
+    counts = defaultdict(count)  # type: ignore
+
     for el in skip_comments(item):
         tag = el.tag.lower()
 
         try:
             if tag == "fabricate":
-                yield from extract_Fabricate(el)
+                id = make_process_id(identifier, tag, next(counts[tag]))
+                yield from extract_Fabricate(el, id=id)
 
             elif tag == "deconstruct":
-                yield from extract_Deconstruct(el)
+                id = make_process_id(identifier, tag, next(counts[tag]))
+                yield from extract_Deconstruct(el, id=id)
 
             elif tag == "price":
-                yield from extract_Price(el)
+                id = make_process_id(identifier, tag, next(counts[tag]))
+                yield from extract_Price(el, id=id)
 
         except Error as err:
             yield err.as_warning()
@@ -429,9 +445,7 @@ def extract_item_identifier(el) -> Identifier:
     return make_identifier(identifier)
 
 
-def extract_Fabricate(
-    el,
-) -> Iterator[Process | Warning]:
+def extract_Fabricate(el, **kwargs) -> Iterator[Process | Warning]:
     # <Fabricate> is a child of <Item> or whatever. Our model is upside down
     # compared to Barotrauma. Our Fabricate has the item it outs output as a
     # child in `uses`.
@@ -446,6 +460,7 @@ def extract_Fabricate(
     )
 
     res = Process(
+        **kwargs,
         uses=[
             Part(
                 what=extract_item_identifier(el.getparent()),
@@ -482,9 +497,7 @@ def extract_Fabricate(
     yield res
 
 
-def extract_Fabricate_Item(
-    el,
-) -> Iterator[RequiredSkill | Part | Warning]:
+def extract_Fabricate_Item(el) -> Iterator[RequiredSkill | Part | Warning]:
     attrs = Attribs.from_element(el)
 
     if el.tag.lower() == "requiredskill":
@@ -525,10 +538,11 @@ def extract_Fabricate_Item(
         yield warn_unexpected_element(unexpected=child)
 
 
-def extract_Deconstruct(el) -> Iterator[Process | Warning]:
+def extract_Deconstruct(el, **kwargs) -> Iterator[Process | Warning]:
     attrs = Attribs.from_element(el)
 
     fab = Process(
+        **kwargs,
         uses=[Part(what=extract_item_identifier(el.getparent()), amount=-1)],
         skills={},
         time=attrs.use("time", convert=float, default=1.0),
@@ -694,7 +708,7 @@ def extract_Deconstruct_Item(el) -> Iterator[Part | Warning]:
     yield from attrs.warnings()
 
 
-def extract_Price(el) -> Iterator[Process | Warning]:
+def extract_Price(el, **kwargs) -> Iterator[Process | Warning]:
     attrs = Attribs.from_element(el)
 
     # canbespecial is for discounts or in demand i guess? could be interesting
@@ -718,6 +732,7 @@ def extract_Price(el) -> Iterator[Process | Warning]:
     yield from attrs.warnings()
 
     price = Process(
+        **kwargs,
         stations=[],
         uses=[
             Part(what=MONEY, amount=-1),
@@ -1102,13 +1117,24 @@ if __name__ == "__main__":
                     part.combine_in_place(other)
                     del process.uses[i + 1 + j]
 
+    for i, process in enumerate_rev(processes):
+        for j, other in enumerate_rev(processes[i + 1 :]):
+            if process.id == other.id:
+                logwarn("processes share the same `id`", l=process, r=other)
+
     logtime("orphaning orphans")
 
     _unpruned_len = len(index)
+
+    identifiers_used = set()
+    for process in processes:
+        identifiers_used.update(part.what for part in process.iter_parts())
+        identifiers_used.update(process.stations)
+
     index = {
         k: item
         for k, item in index.items()
-        if any(item.used_in(process) for process in processes)
+        if k in identifiers_used or any(t in identifiers_used for t in item.tags)
     }
 
     logtime(f"{len(processes)} Process for {len(index)} (was {_unpruned_len}) items")
@@ -1120,8 +1146,7 @@ if __name__ == "__main__":
         sprites: dict[Identifier, Sprite] = {}
 
         for item in index.values():
-            els = item.element.xpath("InventoryIcon") + item.element.xpath("Sprite")
-            for sprite in log_warnings(flat_map(extract_Sprite, els)):
+            for sprite in log_warnings(extract_Sprite_under(item.element)):
                 sprites[item.identifier] = sprite
                 break
 
@@ -1191,8 +1216,8 @@ if __name__ == "__main__":
 
             tag = child.tag.lower()
 
-            if tag == 'credit':
-                dictionary['$'] = child.text
+            if tag == "credit":
+                dictionary["$"] = child.text
                 continue
 
             # fmt: off
@@ -1227,7 +1252,7 @@ if __name__ == "__main__":
             "tags_by_identifier": {
                 identifier: item.tags for identifier, item in index.items() if item.tags
             },
-            "procs": processes,
+            "processes": processes,
             "i18n": i18n,
         }
         try:
