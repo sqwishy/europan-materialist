@@ -48,6 +48,8 @@ button, input, select
 button          { cursor: pointer; }
 button:disabled { cursor: not-allowed }
 
+input[inputmode=decimal] { text-align: right }
+
 ul { margin: 0; padding: 0 }
 
 p, .entity, .process, footer, .cmd
@@ -168,17 +170,28 @@ a.identifier
 .taglist
   { flex-grow: 1 }
 
+
 .cmd
   { position: sticky;
       bottom: 1ch;
-     z-index: 1; }
+     z-index: 1; grid-gap: 1ch }
 .cmd
   {  display: flex;
-   max-width: 100% }
-.cmd input
-     { width: 100%;
-   --outline: var(--solar48);
-  box-shadow: 3px 3px var(--outline); }
+   max-width: 100%;
+   flex-wrap: wrap; }
+
+.cmd > *
+  {    border: 1px solid var(--outline);
+    --outline: var(--solar48);
+   box-shadow: 3px 3px var(--outline); }
+
+.cmd .input-group
+  { align-self: center;
+  background: var(--solar96) }
+.cmd .input-group input { border-top: 0; border-bottom: 0 }
+.cmd .input-group label,
+.cmd .input-group span { padding: 0 1ch }
+  
 
 footer
   { max-width: 50ch; }

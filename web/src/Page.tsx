@@ -13,10 +13,10 @@ const amt = (f: number) => f < -1
 const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 
 
+const unreachable = (n: never): never => n;
 // const dbg = v => console.log(v) || v;
 
 
-// substring part name?
 type Filter = string;
 
 
@@ -36,6 +36,8 @@ export const Page = () => {
   const [getLanguage, setLanguage] = createSignal('English')
 
   const [processes, setProcesses] = createStore<Data.Process[]>([]);
+
+  /* TODO how is the pagination meant to work with entity and process types???????? */
 
   createEffect(() => {
     let processes, search: Filter, limit: number;
@@ -91,6 +93,17 @@ export const Page = () => {
     return [...new Set(allIdentifiers)]
   })
 
+  const update = (update: Update) => {
+    if ("search" in update)
+      setSearch(update.search)
+
+    else if ("limit" in update)
+      setLimit(update.limit)
+
+    else
+      unreachable(update)
+  };
+
   const localize: Localize = (text: string) => (   !resource.loading
                                                 && !resource.error
                                                 && (resource()?.i18n[getLanguage()] || {})[text] || text)
@@ -119,30 +132,6 @@ export const Page = () => {
           </p>
         )}
       </Show>
-      {/* search / filter */}
-      <p>
-        <input
-          id="search"
-          type="text"
-          size="30"
-          placeholder="search..."
-          value={getSearch()}
-          onchange={(e) => setSearch(e.currentTarget.value)}
-        />
-        {getSearch()}
-      </p>
-      <p>
-        limit <input
-          id="limit"
-          type="text"
-          size="6"
-          inputmode="decimal"
-          placeholder="limit..."
-          value={getLimit()}
-          onchange={(e) => setLimit(parseInt(e.currentTarget.value, 10) || 0)}
-        />
-        showing {processes?.length}
-      </p>
       {/* stuff */}
       <Show when={resource.error} keyed>
         {({ message }) => <p>error: {message}</p>}
@@ -159,9 +148,12 @@ export const Page = () => {
         </For>
       </Locale.Provider>
 
-      <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p>
+      {/* <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p> */}
 
-      <Command update={setSearch} />
+      <Command 
+        filter={getSearch()}
+        limit={getLimit()}
+        update={update} />
 
       <datalist id="cmdcomplete">
         <For each={complete()}>
@@ -170,17 +162,18 @@ export const Page = () => {
       </datalist>
 
       <footer>
-        <p>This site uses content and graphics from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>. It is not endorsed, affiliated, or conspiring with Undertow Games.</p>
+        <p>This website uses content and graphics from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>. It is not endorsed by, affiliated with, or conspiring with Undertow Games.</p>
       </footer>
     </>
   );
 };
 
 
-type Update = string;
+type Update = { "search": string }
+            | { "limit": number };
 
-function Command(props: { update: (_: Update) => void }){
-  const [self, _] = splitProps(props, ["update"]);
+function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }){
+  const [self, _] = splitProps(props, ["filter", "limit", "update"]);
   return (
     <div class="cmd">
       <input
@@ -188,8 +181,24 @@ function Command(props: { update: (_: Update) => void }){
         accessKey="k"
         class="cmdline"
         list="cmdcomplete"
-        onchange={(e) => self.update(e.currentTarget.value)}
+        size="32"
+        placeholder="search..."
+        value={self.filter}
+        onchange={(e) => self.update({ "search": e.currentTarget.value })}
       />
+      <div class="input-group">
+        <label for="limit">limit</label>
+        <input
+          id="limit"
+          type="text"
+          size="6"
+          inputmode="decimal"
+          placeholder="limit..."
+          value={self.limit}
+          onchange={(e) => self.update({ "limit": parseInt(e.currentTarget.value, 10) || 0 })}
+        />
+        <span>of ???</span>
+      </div>
     </div>
   )
 }
@@ -266,6 +275,7 @@ function Process({ proc } : { proc: Data.Process }) {
     </div>
   )
 }
+
 
 function UsesList({ uses } : { uses: (Data.WeightedRandomWithReplacement | Data.Part)[] }) {
     return (
