@@ -207,19 +207,3 @@ footer { max-width: 50ch; justify-self: end }
           font-size: large;
   font-variant-caps: small-caps;
           max-width: 20ch }
-
-a.wiki-link::after
-       { content: '';
-          height: 1.5ch;
-           width: 2ch;
-    /* margin-right: -2ch; */
-        position: relative;
-             /* top: -10%; */
-         display: inline-block;
-  pointer-events: none }
-a.wiki-link::after
-    { background: var(--muted);
-       clip-path: url("#barowiki-icon");
-         opacity: 0 }
-a.wiki-link:hover::after
-  { opacity: 1 }

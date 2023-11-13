@@ -352,7 +352,6 @@ function Localized({ children } : { children : Data.Identifier | Data.Money }) {
       <>
         <a class="wiki-link" href={wikiUrl} target="blank" rel="noopener">
           {localize(children)}
-          {/* <span class="barowiki-icon"/> */}
         </a>
         {" "}
         <Identifier>{children}</Identifier>
