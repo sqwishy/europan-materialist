@@ -31,6 +31,12 @@ body
     color:            var(--text);
     margin: 0 }
 
+a
+  { text-decoration: none }
+footer a,
+a:hover
+  { text-decoration: underline }
+
 a, input, button, select
   { background:  transparent;
     color:       inherit;
@@ -38,10 +44,9 @@ a, input, button, select
     text-align:  inherit;
     text-shadow: inherit }
 
-button, input, select
+button, input[type=text], select
   { background-color: var(--input);
     border:           1px solid var(--outline);
-    /* border-radius:    4px; */
     padding:    0.5ch 0.4ch;
     box-sizing: content-box; }
 
@@ -93,16 +98,12 @@ p, .entity, .process, footer, .cmd
 /* stations (Deconstructor/Fabricator) row */
 .item.stations
 {            color: var(--solar96);
-           --muted: var(--solar72);
+           --muted: var(--solar84);
        text-shadow: 1px   1px var(--solar00);
   background-color: var(--solar12);
             border: 1px solid var(--solar00);
         box-shadow: inset  1px  1px var(--solar24),
                     inset -1px -1px var(--solar24) }
-  /* background-color: var(--solar-violet24); */
-  /*           border: 1px solid var(--solar-violet00); */
-  /*       box-shadow: inset  1px  1px var(--solar-violet48), */
-  /*                   inset -1px -1px var(--solar-violet48) } */
 .item.stations + .item.stations { border-top: 0 }
 
 /* stack decoration under amount text */
@@ -124,6 +125,7 @@ p, .entity, .process, footer, .cmd
   { content: '×'; line-height: 0 }
 
 /* stripe repeating */
+.cmd .decoration,
 .item .decoration
   { --pointyness: 4px; --gap: 8px; --from-bottom: 4px;
     --tail-vee:  calc(100% - var(--from-bottom));
@@ -131,8 +133,9 @@ p, .entity, .process, footer, .cmd
     --head-vee:  calc(var(--tail-vee) - var(--gap));
     --head-wing: calc(var(--tail-wing) - var(--gap)) }
 /* calc(100% + 1px) helps prevent a funny horizontal line, still shows up a lot on edge */
+.cmd .decoration,
 .item .decoration
-  { clip-path: polygon(0               0%,  100%               0,  100% var(--head-wing),   50% var(--head-vee),   0 var(--head-wing),
+  { clip-path: polygon(0               0%,  100%              0%,  100% var(--head-wing),   50% var(--head-vee),   0 var(--head-wing),
                        0 var(--tail-wing),   50% var(--tail-vee),  100% var(--tail-wing),  100% calc(100% + 1px),  0 calc(100% + 1px)) }
 
 /* stripe end */
@@ -140,6 +143,7 @@ p, .entity, .process, footer, .cmd
   { clip-path: polygon(0  0%,  100%   0,  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing)) }
 
 /* stripe colors */
+.cmd .decoration,
 .item .decoration
   { background-color: var(--solar60) }
 .item.consumed .decoration
@@ -158,12 +162,9 @@ p, .entity, .process, footer, .cmd
 /* to support not using white-space: nowrap everywhere? */
 .item .sprite
   { align-self: center }
-a.identifier
+.identifier
   { color: var(--muted);
-    font: 75% 'IBM Plex Mono', monospace;
-    text-decoration: none }
-/* .identifier::before, */
-/* .identifier::after  { vertical-align: 20%; font-size: 60% } */
+    font: 75% 'IBM Plex Mono', monospace }
 .identifier::before { content: '{' }
 .identifier::after  { content: '}' }
 
@@ -185,12 +186,15 @@ a.identifier
     --outline: var(--solar48);
    box-shadow: 3px 3px var(--outline); }
 
+.cmd label
+  { padding: 0 1ch; }
+
 .cmd .input-group
-  { align-self: center;
-  background: var(--solar96) }
-.cmd .input-group input { border-top: 0; border-bottom: 0 }
-.cmd .input-group label,
-.cmd .input-group span { padding: 0 1ch }
+  { background: var(--solar96) }
+.cmd .input-group input
+  { border-top: 0; border-bottom: 0 }
+.cmd .input-group span
+  { padding: 0 1ch }
   
 
 html { min-height: 100% }
@@ -203,3 +207,19 @@ footer { max-width: 50ch; justify-self: end }
           font-size: large;
   font-variant-caps: small-caps;
           max-width: 20ch }
+
+a.wiki-link::after
+       { content: '';
+          height: 1.5ch;
+           width: 2ch;
+    /* margin-right: -2ch; */
+        position: relative;
+             /* top: -10%; */
+         display: inline-block;
+  pointer-events: none }
+a.wiki-link::after
+    { background: var(--muted);
+       clip-path: url("#barowiki-icon");
+         opacity: 0 }
+a.wiki-link:hover::after
+  { opacity: 1 }

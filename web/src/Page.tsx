@@ -43,8 +43,7 @@ export const LoadingScreen = () => {
       </main>
       <footer>
         <p>
-          This site uses content and graphics from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>.
-          This is not endorsed or affiliated with Undertow Games.
+          This site lifts assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>.
         </p>
       </footer>
     </>
@@ -177,17 +176,18 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 type Update = { "search": string }
             | { "limit": number };
 
-function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }){
+function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }) {
   const [self, _] = splitProps(props, ["filter", "limit", "update"]);
   return (
     <div class="cmd">
       <input
         id="cmdline"
-        accessKey="k"
+        type="text"
         class="cmdline"
-        list="cmdcomplete"
         size="32"
         placeholder="search..."
+        accessKey="k"
+        list="cmdcomplete"
         value={self.filter}
         onchange={(e) => self.update({ "search": e.currentTarget.value })}
       />
@@ -347,7 +347,17 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
 
 function Localized({ children } : { children : Data.Identifier | Data.Money }) {
   const [localize] = useContext(Locale);
-  return <>{localize(children)} <Identifier>{children}</Identifier></>
+  const wikiUrl = `https://barotraumagame.com/wiki/${localize(children)}`
+  return (
+      <>
+        <a class="wiki-link" href={wikiUrl} target="blank" rel="noopener">
+          {localize(children)}
+          {/* <span class="barowiki-icon"/> */}
+        </a>
+        {" "}
+        <Identifier>{children}</Identifier>
+      </>
+  )
 }
 
 function Identifier({ children } : { children : Data.Identifier }) {
