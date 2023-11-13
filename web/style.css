@@ -49,11 +49,16 @@ p, .entity, .process, footer, .cmd
   { max-width: 50ch;
     margin:    2ch 1ch }
 
+.process ul .pin { display: none }
+.process ul .pin { float: right }
+.process ul::after { clear: both; content: ""; display: block }
 .sub
   { color: var(--muted);
     display: inline-block;
     margin: 0.5ch 1ch;
     font-size: 85% }
+.pin
+  { text-align: right }
 
 .item span /* vertical padding here coupled with .sprite padding */
   { padding:   0.5ch 0.4ch; }
@@ -133,15 +138,16 @@ p, .entity, .process, footer, .cmd
     --tail-wing: calc(var(--tail-vee) - var(--pointyness));
     --head-vee:  calc(var(--tail-vee) - var(--gap));
     --head-wing: calc(var(--tail-wing) - var(--gap)) }
-/* calc(100% + 1px) helps prevent a funny horizontal line, still shows up a lot on edge */
+/* calc(100% + 1px) calc(0% - 1px) helps prevent a funny horizontal gap/line
+ * between decorations, still shows up a lot on edge */
 .cmd .decoration,
 .item .decoration
-  { clip-path: polygon(0               0%,  100%              0%,  100% var(--head-wing),   50% var(--head-vee),   0 var(--head-wing),
+  { clip-path: polygon(0   calc(0% - 1px),  100%  calc(0% - 1px),  100% var(--head-wing),   50% var(--head-vee),   0 var(--head-wing),
                        0 var(--tail-wing),   50% var(--tail-vee),  100% var(--tail-wing),  100% calc(100% + 1px),  0 calc(100% + 1px)) }
 
 /* stripe end */
 .item.produced:last-of-type .decoration
-  { clip-path: polygon(0  0%,  100%   0,  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing)) }
+  { clip-path: polygon(0  calc(0% - 1px),  100%   calc(0% - 1px),  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing)) }
 
 /* stripe colors */
 .cmd .decoration,
@@ -152,7 +158,7 @@ p, .entity, .process, footer, .cmd
 .item.produced .decoration
   { background-color: var(--produced) }
 .item .decoration /* cute or cringe ??? */
-  { background-image: linear-gradient(to right, #ffffff00 50%, #ffffff28 50%) }
+  { background-image: linear-gradient(to right, #ffffff00, #ffffff20 50%, #ffffff00 50%) }
 
 .item .sprite
            { flex-basis: 48px;
@@ -186,17 +192,6 @@ p, .entity, .process, footer, .cmd
   {    border: 1px solid var(--outline);
     --outline: var(--solar48);
    box-shadow: 3px 3px var(--outline); }
-
-.cmd label
-  { padding: 0 1ch; }
-
-.cmd .input-group
-  { background: var(--solar96) }
-.cmd .input-group input
-  { border-top: 0; border-bottom: 0 }
-.cmd .input-group span
-  { padding: 0 1ch }
-  
 
 html { min-height: 100% }
 body { min-height: 100vh }

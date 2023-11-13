@@ -23,7 +23,7 @@ const applyFilter = (p: Data.Process, f: Filter) => (
 
 
 type Localize = (_: string) => string
-const Locale = createContext<[Localize]>([_ => _]);
+const Locale = createContext<[Localize, Localize]>([_ => _, _ => _]);
 
 
 export const LoadingScreen = () => {
@@ -60,7 +60,7 @@ export const Page = (props: { stuff: Data.Stuff }) => {
   const getSearch = () => searchParams.q?.trim() || ''
   const setSearch = (q: string) => setSearchParams({ q })
 
-  const getLimit = () => parseInt(searchParams.limit, 10) || 20
+  const getLimit = () => parseInt(searchParams.limit, 10) || 50
   const setLimit = (limit: number) => setSearchParams({ limit })
 
   const [processes, setProcesses] = createStore<Data.Process[]>([]);
@@ -122,6 +122,8 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 
   const localize: Localize =
     (text: string) => (self.stuff.i18n[getLanguage()] || {})[text] || text
+  const toEnglish: Localize =
+    (text: string) => (self.stuff.i18n.English?.[text] || text)
 
   return (
     <>
@@ -146,7 +148,7 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 
       {/* items / stuff list */}
 
-      <Locale.Provider value={[localize]}>
+      <Locale.Provider value={[localize, toEnglish]}>
         <For each={getSearch() ? items() : []}>
           {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
         </For>
@@ -191,19 +193,15 @@ function Command(props: { filter: Filter, limit: number, update: (_: Update) => 
         value={self.filter}
         onchange={(e) => self.update({ "search": e.currentTarget.value })}
       />
-      <div class="input-group">
-        <label for="limit">limit</label>
-        <input
-          id="limit"
-          type="text"
-          size="6"
-          inputmode="decimal"
-          placeholder="limit..."
-          value={self.limit}
-          onchange={(e) => self.update({ "limit": parseInt(e.currentTarget.value, 10) || 0 })}
-        />
-        <span>of ???</span>
-      </div>
+      <input
+        id="limit"
+        type="text"
+        size="6"
+        inputmode="decimal"
+        placeholder="limit..."
+        value={self.limit}
+        onchange={(e) => self.update({ "limit": parseInt(e.currentTarget.value, 10) || 0 })}
+      />
     </div>
   )
 }
@@ -261,9 +259,16 @@ function Process({ proc } : { proc: Data.Process }) {
       {/* parts produced */}
       <UsesList uses={uses.filter(({ amount }) => amount >= 0)} />
 
-      <Show when={needs_recipe}>
-        <span class="sub">{localize("fabricatorrequiresrecipe")}</span>
-      </Show>
+      <ul>
+        <Show when={needs_recipe}>
+          <span class="sub">{localize("fabricatorrequiresrecipe")}</span>
+        </Show>
+
+        <span class="pin">
+          <button>➯</button>
+        </span>
+
+      </ul>
     </div>
   )
 }
@@ -333,11 +338,14 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
 }
 
 function Localized({ children } : { children : Data.Identifier | Data.Money }) {
-  const [localize] = useContext(Locale);
-  const wikiUrl = `https://barotraumagame.com/wiki/${localize(children)}`
+  const [localize, toEnglish] = useContext(Locale);
   return (
       <>
-        <a class="wiki-link" href={wikiUrl} target="blank" rel="noopener">
+        <a
+          class="wiki-link" href={`https://barotraumagame.com/wiki/${toEnglish(children)}`}
+          target="blank"
+          rel="noopener"
+        >
           {localize(children)}
         </a>
         {" "}
