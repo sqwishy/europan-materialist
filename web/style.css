@@ -65,15 +65,21 @@ p, .entity, .process, footer, .cmd
   { padding:   0.5ch 0.4ch; }
 .item .time,
 .item .condition,
+.item .skill,
 .item .amount
   { overflow:      hidden;
     text-overflow: ellipsis;
     white-space:   nowrap }
 
+.item .skill
+    { color: var(--muted);
+  font-size: 85% }
+
 .item { display: flex }
 
 .item > *
-  { flex: 0 0 min-content }
+  { flex: 0 0 min-content; align-self: baseline }
+.item > .decoration { align-self: stretch }
 .item .amount,
 .item .time
   { text-align: right; min-width: 6ch; max-width: 6ch }

@@ -57,7 +57,7 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const getSearch = () => searchParams.q || ''
+  const getSearch = () => searchParams.q?.trim() || ''
   const setSearch = (q: string) => setSearchParams({ q })
 
   const getLimit = () => parseInt(searchParams.limit, 10) || 20
@@ -231,34 +231,27 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
 }
 
 function Process({ proc } : { proc: Data.Process }) {
-  const { time, stations, uses, needs_recipe, description } = proc;
-  // const [station, ...otherStations] = stations;
+  const { id, skills, time, stations, uses, needs_recipe, description } = proc;
   return (
-    <div class="process">
+    <div class="process" id={id}>
       {/* parts consumed */}
       <UsesList uses={uses.filter(({ amount }) => amount < 0)} />
 
       {/* station and time */} 
-      <div class="item stations">
-        <span class="time">
-          <Show when={time}>
-            ⏱️ {proc.time}s
-          </Show>
-        </span>
-        <For each={stations.slice(0,1)}>
-          {(station) => (
-            <>
-              <span class="station"><Localized>{station}</Localized></span>
-              <Sprite what={station}/>
-            </>
-          )}
-        </For>
-      </div>
-      <For each={stations.slice(1)}>
-        {(station) => (
+      <For each={stations}>
+        {(station, index) => (
           <div class="item stations">
-            <span class="time"></span>
+            <span class="time">
+              <Show when={time && index() == 0}>
+                ⏱️ {proc.time}s
+              </Show>
+            </span>
             <span class="station"><Localized>{station}</Localized></span>
+            <Show when={index() == 0}>
+              <For each={Object.entries(skills)}>
+                {([skill, level]) => <span class="skill muted">{ skill } { level }</span>}
+              </For>
+            </Show>
             <Sprite what={station}/>
           </div>
         )}
