@@ -1220,6 +1220,10 @@ if __name__ == "__main__":
                 dictionary["$"] = child.text
                 continue
 
+            if tag == "fabricatorrequiresrecipe":
+                dictionary[tag] = child.text
+                continue
+
             # fmt: off
             msg = (   drop_prefix(tag, "entityname.")
                    or drop_prefix(tag, "npctitle.") # merchants

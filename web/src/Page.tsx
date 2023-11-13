@@ -43,7 +43,7 @@ export const LoadingScreen = () => {
       </main>
       <footer>
         <p>
-          This site lifts assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>.
+          This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>.
         </p>
       </footer>
     </>
@@ -231,7 +231,8 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
 }
 
 function Process({ proc } : { proc: Data.Process }) {
-  const { id, skills, time, stations, uses, needs_recipe, description } = proc;
+  const { id, skills, time, stations, uses, needs_recipe } = proc;
+  const [localize] = useContext(Locale);
   return (
     <div class="process" id={id}>
       {/* parts consumed */}
@@ -260,15 +261,8 @@ function Process({ proc } : { proc: Data.Process }) {
       {/* parts produced */}
       <UsesList uses={uses.filter(({ amount }) => amount >= 0)} />
 
-      <Show when={needs_recipe || description}>
-        <span class="sub">
-          <Show when={needs_recipe}>
-            <span>🧠 requires recipe</span>
-          </Show>
-          <Show when={description}>
-            <span>👉 {description}</span>
-          </Show>
-        </span>
+      <Show when={needs_recipe}>
+        <span class="sub">{localize("fabricatorrequiresrecipe")}</span>
       </Show>
     </div>
   )

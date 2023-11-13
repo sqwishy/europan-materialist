@@ -4,24 +4,12 @@
 @import url('https://fonts.googleapis.com/css2?family=Exo+2&family=IBM+Plex+Mono&display=swap');
 
 :root
-  { --panel: var(--gb72);
-    --input: var(--gb72);
-  --outline: var(--gb60);
-     --page: var(--gb84);
-     --text: var(--gb12);
-    --muted: var(--gb24);
-  --station: var(--gb-yellow00);
- --consumed: var(--gb-orange49);
- --produced: var(--gb-green49); }
-
-:root
   { --panel: var(--solar84);
     --input: var(--solar84);
   --outline: var(--solar60);
      --page: var(--solar72);
      --text: var(--solar00);
     --muted: var(--solar12);
-  /* --station: var(--solar24); */
  --consumed: var(--solar-red48);
  --produced: var(--solar-cyan48); }
 
@@ -61,6 +49,12 @@ p, .entity, .process, footer, .cmd
   { max-width: 50ch;
     margin:    2ch 1ch }
 
+.sub
+  { color: var(--muted);
+    display: inline-block;
+    margin: 0.5ch 1ch;
+    font-size: 85% }
+
 .item span /* vertical padding here coupled with .sprite padding */
   { padding:   0.5ch 0.4ch; }
 .item .time,
@@ -72,8 +66,8 @@ p, .entity, .process, footer, .cmd
     white-space:   nowrap }
 
 .item .skill
-    { color: var(--muted);
-  font-size: 85% }
+  {     color: var(--muted);
+    font-size: 85% }
 
 .item { display: flex }
 
@@ -100,6 +94,7 @@ p, .entity, .process, footer, .cmd
   {    border-top-width: 1px }
 .item:last-of-type
   { border-bottom-width: 1px }
+
 
 /* stations (Deconstructor/Fabricator) row */
 .item.stations
