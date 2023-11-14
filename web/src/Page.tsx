@@ -30,6 +30,11 @@ export const LoadingScreen = () => {
   const [resource] = createResource(Data.fetchStuff)
   return (
     <>
+      <footer>
+        <p>
+          This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>.
+        </p>
+      </footer>
       <main>
         <Show when={resource.loading}>
           <div class="loading-screen">loading...</div>
@@ -41,11 +46,6 @@ export const LoadingScreen = () => {
           {(stuff) => <Page stuff={stuff} />}
         </Show>
       </main>
-      <footer>
-        <p>
-          This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>.
-        </p>
-      </footer>
     </>
   )
 }
@@ -146,6 +146,8 @@ export const Page = (props: { stuff: Data.Stuff }) => {
           </select>
         </p>
 
+      <hr/>
+
       {/* items / stuff list */}
 
       <Locale.Provider value={[localize, toEnglish]}>
@@ -158,6 +160,8 @@ export const Page = (props: { stuff: Data.Stuff }) => {
       </Locale.Provider>
 
       {/* <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p> */}
+
+      <hr/>
 
       <Command 
         filter={getSearch()}
@@ -259,16 +263,9 @@ function Process({ proc } : { proc: Data.Process }) {
       {/* parts produced */}
       <UsesList uses={uses.filter(({ amount }) => amount >= 0)} />
 
-      <ul>
-        <Show when={needs_recipe}>
-          <span class="sub">{localize("fabricatorrequiresrecipe")}</span>
-        </Show>
-
-        <span class="pin">
-          <button>➯</button>
-        </span>
-
-      </ul>
+      <Show when={needs_recipe}>
+        <span class="needs-recipe">{localize("fabricatorrequiresrecipe")}</span>
+      </Show>
     </div>
   )
 }

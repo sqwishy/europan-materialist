@@ -19,11 +19,12 @@ body
     color:            var(--text);
     margin: 0 }
 
-a
-  { text-decoration: none }
-footer a,
-a:hover
-  { text-decoration: underline }
+main, footer { max-width: 50ch; }
+
+hr { border: 0; height: 1px; background-color: var(--outline); }
+
+p, .entity, .process, .cmd
+  { margin: 1ch 1ch }
 
 a, input, button, select
   { background:  transparent;
@@ -45,103 +46,125 @@ input[inputmode=decimal] { text-align: right }
 
 ul { margin: 0; padding: 0 }
 
-p, .entity, .process, footer, .cmd
-  { max-width: 50ch;
-    margin:    2ch 1ch }
 
-.process ul .pin { display: none }
-.process ul .pin { float: right }
-.process ul::after { clear: both; content: ""; display: block }
-.sub
-  { color: var(--muted);
+/* positioning */
+
+ .entity a:not(:hover),
+.process a:not(:hover)
+  { text-decoration: none }
+
+.process .needs-recipe
+    { color: var(--muted);
     display: inline-block;
-    margin: 0.5ch 1ch;
-    font-size: 85% }
-.pin
-  { text-align: right }
+     margin: 0.5ch 1ch;
+  font-size: 85% }
 
-.item span /* vertical padding here coupled with .sprite padding */
+.item > span /* vertical padding here coupled with .sprite padding */
   { padding:   0.5ch 0.4ch; }
-.item .time,
-.item .condition,
-.item .skill,
-.item .amount
+
+.item > .time,
+.item > .condition,
+.item > .skill,
+.item > .amount
   { overflow:      hidden;
     text-overflow: ellipsis;
     white-space:   nowrap }
 
-.item .skill
+.item > .skill
   {     color: var(--muted);
     font-size: 85% }
 
-.item { display: flex }
+/* amount what    sprite */
+/*   time station sprite */
+
+.item
+  { display: flex }
 
 .item > *
   { flex: 0 0 min-content; align-self: baseline }
-.item > .decoration { align-self: stretch }
-.item .amount,
-.item .time
+
+.item > .decoration
+  { align-self: stretch;
+    box-sizing: border-box;
+       --inset:  8px;
+       --width: 24px;
+     min-width: var(--width);
+     max-width: var(--width);
+        margin: 0 var(--inset) }
+
+/* stack decoration under amount text with negative margin */
+.process .item > .decoration
+  { margin-right: calc(0px - var(--width) - var(--inset)) }
+
+.item > .decoration + *
+  { z-index: 1 }
+
+.item > .amount,
+.item > .time
   { text-align: right; min-width: 6ch; max-width: 6ch }
-.item .station,
-.item .what
+
+.item > .station,
+.item > .what
   { flex: 1 1 max-content }
+
+.item > .taglist
+  { flex-grow: 1 }
+
+.item > .sprite
+         { align-self: center;
+           flex-basis: 48px;
+  background-position: center;
+      background-size: contain;
+    background-repeat: no-repeat;
+         padding-left: 0;
+        padding-right: 0; }
+
 
 .random + .random-list
   { margin-left: 1ch }
 .random .what
   { font-style: italic }
 
+
+/* colors */
+
 .item
   { background-color: var(--panel);
               border: 0 solid var(--outline);
         border-width: 0 1px 0 1px }
+
 .item:first-of-type
   {    border-top-width: 1px }
+
 .item:last-of-type
   { border-bottom-width: 1px }
 
-
-/* stations (Deconstructor/Fabricator) row */
 .item.stations
-{            color: var(--solar96);
+  {          color: var(--solar96);
            --muted: var(--solar84);
        text-shadow: 1px   1px var(--solar00);
   background-color: var(--solar12);
             border: 1px solid var(--solar00);
         box-shadow: inset  1px  1px var(--solar24),
                     inset -1px -1px var(--solar24) }
-.item.stations + .item.stations { border-top: 0 }
 
-/* stack decoration under amount text */
-.item .decoration
-    { --inset:  8px;
-      --width: 24px }
-.item .decoration
-    { box-sizing: border-box;
-       min-width: var(--width);
-       max-width: var(--width);
-     margin-left: var(--inset);
-    margin-right: calc(0px - var(--width) - var(--inset)) }
-.entity .item .decoration
-  { margin-right: var(--inset) }
-.item .decoration + *
-  { z-index: 1 }
+.item.stations + .item.stations
+  { border-top: 0 }
 
-.item .amount.amount-multiple::after
+.item > .amount.amount-multiple::after
   { content: '×'; line-height: 0 }
 
 /* stripe repeating */
-.cmd .decoration,
-.item .decoration
+.item > .decoration
   { --pointyness: 4px; --gap: 8px; --from-bottom: 4px;
     --tail-vee:  calc(100% - var(--from-bottom));
     --tail-wing: calc(var(--tail-vee) - var(--pointyness));
     --head-vee:  calc(var(--tail-vee) - var(--gap));
     --head-wing: calc(var(--tail-wing) - var(--gap)) }
+
 /* calc(100% + 1px) calc(0% - 1px) helps prevent a funny horizontal gap/line
  * between decorations, still shows up a lot on edge */
-.cmd .decoration,
-.item .decoration
+.item > .decoration
   { clip-path: polygon(0   calc(0% - 1px),  100%  calc(0% - 1px),  100% var(--head-wing),   50% var(--head-vee),   0 var(--head-wing),
                        0 var(--tail-wing),   50% var(--tail-vee),  100% var(--tail-wing),  100% calc(100% + 1px),  0 calc(100% + 1px)) }
 
@@ -149,42 +172,33 @@ p, .entity, .process, footer, .cmd
 .item.produced:last-of-type .decoration
   { clip-path: polygon(0  calc(0% - 1px),  100%   calc(0% - 1px),  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing)) }
 
-/* stripe colors */
-.cmd .decoration,
-.item .decoration
+
+.item > .decoration
   { background-color: var(--solar60) }
-.item.consumed .decoration
+
+.item.consumed > .decoration
   { background-color: var(--consumed) }
-.item.produced .decoration
+
+.item.produced > .decoration
   { background-color: var(--produced) }
-.item .decoration /* cute or cringe ??? */
+
+.item > .decoration /* cute or cringe ??? */
   { background-image: linear-gradient(to right, #ffffff00, #ffffff20 50%, #ffffff00 50%) }
 
-.item .sprite
-           { flex-basis: 48px;
-    background-position: center;
-        background-size: contain;
-      background-repeat: no-repeat;
-                padding: 0.5ch 0 }
-/* to support not using white-space: nowrap everywhere? */
-.item .sprite
-  { align-self: center }
+
 .identifier
   { color: var(--muted);
-    font: 75% 'IBM Plex Mono', monospace }
+     font: 75% 'IBM Plex Mono', monospace }
 .identifier::before { content: '{' }
 .identifier::after  { content: '}' }
-
-.taglist
-  { flex-grow: 1 }
 
 
 .cmd
   { position: sticky;
       bottom: 1ch;
-     z-index: 1; grid-gap: 1ch }
-.cmd
-  {  display: flex;
+     z-index: 1;
+    grid-gap: 1ch;
+     display: flex;
    max-width: 100%;
    flex-wrap: wrap; }
 
@@ -193,11 +207,6 @@ p, .entity, .process, footer, .cmd
     --outline: var(--solar48);
    box-shadow: 3px 3px var(--outline); }
 
-html { min-height: 100% }
-body { min-height: 100vh }
-body { display: flex; flex-direction: column }
-main { flex-grow: 1 }
-footer { max-width: 50ch; justify-self: end }
 .loading-screen
            { margin: 3ch auto;
           font-size: large;
