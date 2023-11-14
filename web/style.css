@@ -19,7 +19,14 @@ body
     color:            var(--text);
     margin: 0 }
 
-main, footer { max-width: 50ch; }
+section, aside, footer
+  { max-width: 50ch; }
+
+.loading-screen
+           { margin: 3ch auto;
+          font-size: large;
+  font-variant-caps: small-caps;
+          max-width: 20ch }
 
 hr { border: 0; height: 1px; background-color: var(--outline); }
 
@@ -48,6 +55,14 @@ ul { margin: 0; padding: 0 }
 
 
 /* positioning */
+
+main > aside
+  {
+    position: fixed;
+    left: 50ch;
+    bottom: 0;
+    top: 0;
+  overflow: scroll; min-height: 100%; max-height: 100%  }
 
  .entity a:not(:hover),
 .process a:not(:hover)
@@ -206,9 +221,3 @@ ul { margin: 0; padding: 0 }
   {    border: 1px solid var(--outline);
     --outline: var(--solar48);
    box-shadow: 3px 3px var(--outline); }
-
-.loading-screen
-           { margin: 3ch auto;
-          font-size: large;
-  font-variant-caps: small-caps;
-          max-width: 20ch }

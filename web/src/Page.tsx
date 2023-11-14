@@ -185,7 +185,7 @@ type Update = { "search": string }
 function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }) {
   const [self, _] = splitProps(props, ["filter", "limit", "update"]);
   return (
-    <div class="cmd">
+    <>
       <input
         id="cmdline"
         type="text"
@@ -206,7 +206,7 @@ function Command(props: { filter: Filter, limit: number, update: (_: Update) => 
         value={self.limit}
         onchange={(e) => self.update({ "limit": parseInt(e.currentTarget.value, 10) || 0 })}
       />
-    </div>
+    </>
   )
 }
 
@@ -232,8 +232,8 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
   )
 }
 
-function Process({ proc } : { proc: Data.Process }) {
-  const { id, skills, time, stations, uses, needs_recipe } = proc;
+function Process({ process } : { process: Data.Process }) {
+  const { id, skills, time, stations, uses, needs_recipe } = process;
   const [localize] = useContext(Locale);
   return (
     <div class="process" id={id}>
@@ -246,7 +246,7 @@ function Process({ proc } : { proc: Data.Process }) {
           <div class="item stations">
             <span class="time">
               <Show when={time && index() == 0}>
-                ⏱️ {proc.time}s
+                ⏱️ {time}s
               </Show>
             </span>
             <span class="station"><Localized>{station}</Localized></span>
