@@ -26,22 +26,28 @@ const resultsLength = (r: Results) => r.entities.length + r.processes.length
 
 
 const filterProcesses =
-  (f: Filter) =>
+  (f: Filter, localize: Localize) =>
   (p: Data.Process) =>
   /* TODO probably doesn't search under WeightedRandomWithReplacement? */
-     p.uses.some(i => "what" in i && i.what.includes(f))
-  || p.stations.some(s => s.includes(f));
+     p.uses.some(i => "what" in i && localize(i.what).includes(f))
+  || p.stations.some(s => localize(s).includes(f))
 
 
 const filterEntities =
-  (f: Filter) =>
+  (f: Filter, localize: Localize) =>
   ([ identifier, tags ]: [ Data.Identifier, Data.Identifier[] ]) =>
-     identifier.includes(f)
-  || tags.some(t => t.includes(f));
+     localize(identifier).includes(f)
+  || tags.some(t => localize(t).includes(f))
+
+
+const eithers =
+  <T,>(a: (_: T) => boolean, b: (_: T) => boolean) =>
+  (t: T) => a(t) || b(t)
 
 
 type Localize = (_: string) => string
-const Locale = createContext<[Localize, Localize]>([_ => _, _ => _]);
+const noLocalize: Localize = _ => _
+const Locale = createContext<[Localize, Localize]>([noLocalize, noLocalize]);
 
 
 export const LoadingScreen = () => {
@@ -82,6 +88,15 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 
   const [getLanguage, setLanguage] = createSignal('English')
 
+  const localize: Localize =
+    (text: string) => self.stuff.i18n[getLanguage()]?.[text] || text
+
+  const localizeToLower: Localize =
+    (text: string) => self.stuff.i18n[getLanguage()]?.[text]?.toLowerCase() || text
+
+  const toEnglish: Localize =
+    (text: string) => self.stuff.i18n.English?.[text] || text
+
   const [searchParams, setSearchParams] = useSearchParams()
 
   const getSearch = () => searchParams.q?.trim() || ''
@@ -91,16 +106,25 @@ export const Page = (props: { stuff: Data.Stuff }) => {
   const setLimit = (limit: number) => setSearchParams({ limit })
 
   const filteredResults = createMemo((): Results => {
-    const search = getSearch();
+    /* enforce case insensitive matching? */
+    const search = getSearch().toLowerCase();
+    const hasLanguage = getLanguage() in self.stuff.i18n;
 
     /* don't show entities unless there is a search */
-    let entities = [];
+    /* why can't fucking typescript infer the type for `entities` when this return type is explicit ??? */
+    let entities: [string, string[]][] = [];
     let processes = self.stuff.processes
 
     if (search.length) {
       entities = Object.entries(self.stuff.tags_by_identifier)
-                       .filter(filterEntities(search))
-      processes = processes.filter(filterProcesses(search))
+                       .filter(hasLanguage
+                             ? eithers(filterEntities(search, noLocalize),
+                                       filterEntities(search, localizeToLower))
+                             : filterEntities(search, noLocalize))
+      processes = processes.filter(hasLanguage
+                                 ? eithers(filterProcesses(search, noLocalize),
+                                           filterProcesses(search, localizeToLower))
+                                 : filterProcesses(search, noLocalize))
     }
 
     return { entities, processes }
@@ -139,11 +163,6 @@ export const Page = (props: { stuff: Data.Stuff }) => {
     else
       unreachable(update)
   };
-
-  const localize: Localize =
-    (text: string) => (self.stuff.i18n[getLanguage()] || {})[text] || text
-  const toEnglish: Localize =
-    (text: string) => (self.stuff.i18n.English?.[text] || text)
 
   return (
     <>
