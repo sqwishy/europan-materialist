@@ -16,10 +16,28 @@ const unreachable = (n: never): never => n;
 
 type Filter = string;
 
+type Results = {
+  entities: [/* identifier */ Data.Identifier, /* tags */ Data.Identifier[]][],
+  processes: Data.Process[],
+};
 
-const applyFilter = (p: Data.Process, f: Filter) => (
+
+const resultsLength = (r: Results) => r.entities.length + r.processes.length
+
+
+const filterProcesses =
+  (f: Filter) =>
+  (p: Data.Process) =>
+  /* TODO probably doesn't search under WeightedRandomWithReplacement? */
      p.uses.some(i => "what" in i && i.what.includes(f))
-  || p.stations.some(s => s.includes(f)));
+  || p.stations.some(s => s.includes(f));
+
+
+const filterEntities =
+  (f: Filter) =>
+  ([ identifier, tags ]: [ Data.Identifier, Data.Identifier[] ]) =>
+     identifier.includes(f)
+  || tags.some(t => t.includes(f));
 
 
 type Localize = (_: string) => string
@@ -30,11 +48,20 @@ export const LoadingScreen = () => {
   const [resource] = createResource(Data.fetchStuff)
   return (
     <>
-      <footer>
-        <p>
-          This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>, property of <a href="https://undertowgames.com/">Undertow Games</a>.
-        </p>
-      </footer>
+      <Show when={!resource.loading && !resource.error && resource()} keyed>
+        <footer>
+          <p>
+            This is a directory of <a href="https://barotraumagame.com/">Barotrauma</a> crafting recipes.
+          </p>
+          <p>
+            Use the <strong>search at the bottom</strong> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
+          </p>
+          <p>
+            This site uses assets and content from Barotrauma, property of <a href="https://undertowgames.com/">Undertow Games</a>.
+            This is a non-commercial project and is in no way affiliated with Undertow Games.
+          </p>
+        </footer>
+      </Show>
       <main>
         <Show when={resource.loading}>
           <div class="loading-screen">loading...</div>
@@ -63,43 +90,36 @@ export const Page = (props: { stuff: Data.Stuff }) => {
   const getLimit = () => parseInt(searchParams.limit, 10) || 50
   const setLimit = (limit: number) => setSearchParams({ limit })
 
-  const [processes, setProcesses] = createStore<Data.Process[]>([]);
+  const filteredResults = createMemo((): Results => {
+    const search = getSearch();
 
-  /* TODO how is the pagination meant to work with entity and process types???????? */
-
-  createEffect(() => {
-    let search: Filter,
-        limit: number;
-
+    /* don't show entities unless there is a search */
+    let entities = [];
     let processes = self.stuff.processes
 
-    if ((search = getSearch()).length)
-      processes = processes.filter((p) => applyFilter(p, search))
+    if (search.length) {
+      entities = Object.entries(self.stuff.tags_by_identifier)
+                       .filter(filterEntities(search))
+      processes = processes.filter(filterProcesses(search))
+    }
 
-    if (limit = getLimit())
-      processes = processes.slice(0, limit)
+    return { entities, processes }
+  })
 
-    /* maybe using a store for this is silly,
-     * thought reconcile might be good but seems to not work */
-    setProcesses(processes)
-  });
-
-  const items = createMemo(() => {
-    let search: Filter;
+  const limitedResults = createMemo((): Results => {
     let limit: number;
-    let items = Object.entries(self.stuff.tags_by_identifier);
-    const _filterFn =
-      ([identifier, tags]: [string /*Data.Identifier*/, Data.Identifier[]]) => identifier.includes(search)
-                           || tags.some(t => t.includes(search));
+    let { entities, processes } = filteredResults();
 
+    if ((limit = getLimit()) <= 0)
+        return { entities, processes };
 
-    if ((search = getSearch()).length)
-      items = items.filter(_filterFn)
+    entities = entities.slice(0, limit);
 
-    if (limit = getLimit())
-      items = items.slice(0, limit)
+    limit -= entities.length;
 
-    return items
+    processes = processes.slice(0, limit);
+
+    return { entities, processes };
   })
 
   const complete = createMemo(() => {
@@ -111,7 +131,7 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 
   const update = (update: Update) => {
     if ("search" in update)
-      setSearch(update.search)
+      setSearch(update.search.trim())
 
     else if ("limit" in update)
       setLimit(update.limit)
@@ -150,23 +170,34 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 
       {/* items / stuff list */}
 
-      <Locale.Provider value={[localize, toEnglish]}>
-        <For each={getSearch() ? items() : []}>
-          {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
-        </For>
-        <For each={processes}>
-          {(proc) => <Process proc={proc} />}
-        </For>
-      </Locale.Provider>
+      <section>
+        <Locale.Provider value={[localize, toEnglish]}>
+          <For each={limitedResults().entities}>
+            {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
+          </For>
+          <For each={limitedResults().processes}>
+            {(p) => <Process process={p} />}
+          </For>
+        </Locale.Provider>
+      </section>
+
+      <p>
+        showing <b>{resultsLength(limitedResults())}</b> of <b>{resultsLength(filteredResults())}</b>
+        <Show when={resultsLength(limitedResults()) < resultsLength(filteredResults())}>
+            <button onclick={() => update({ "limit": resultsLength(limitedResults()) + 100 })}>+100</button>
+        </Show>
+      </p>
 
       {/* <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p> */}
 
       <hr/>
 
-      <Command 
-        filter={getSearch()}
-        limit={getLimit()}
-        update={update} />
+      <section class="cmd">
+        <Command
+          filter={getSearch()}
+          limit={getLimit()}
+          update={update} />
+      </section>
 
       <datalist id="cmdcomplete">
         <For each={complete()}>
@@ -222,7 +253,6 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
         <div class="item">
           <span class="decoration"/>
           <span class="taglist">
-            🏷️
             <For each={tags}>
               {(tag) => <Identifier>{ tag }</Identifier>}
             </For>

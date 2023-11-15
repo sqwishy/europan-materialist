@@ -1,7 +1,6 @@
 @import "palette.css";
 
-/* @import url('https://fonts.googleapis.com/css2?family=Exo+2:ital@0;1&display=swap'); */
-@import url('https://fonts.googleapis.com/css2?family=Exo+2&family=IBM+Plex+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Exo+2&family=Questrial&family=IBM+Plex+Mono&display=swap');
 
 :root
   { --panel: var(--solar84);
@@ -14,10 +13,13 @@
  --produced: var(--solar-cyan48); }
 
 body
-  { font: 1rem/1.05 'Exo 2', sans-serif;
+  { font: 1rem/1.1 'Exo 2', sans-serif;
     background-color: var(--page);
     color:            var(--text);
     margin: 0 }
+
+footer
+  { font-family: 'Questrial', sans-serif;  }
 
 section, aside, footer
   { max-width: 50ch; }
@@ -31,7 +33,7 @@ section, aside, footer
 hr { border: 0; height: 1px; background-color: var(--outline); }
 
 p, .entity, .process, .cmd
-  { margin: 1ch 1ch }
+  { margin: 10px }
 
 a, input, button, select
   { background:  transparent;
@@ -49,6 +51,8 @@ button, input[type=text], select
 button          { cursor: pointer; }
 button:disabled { cursor: not-allowed }
 
+p > button { margin-left: 1ch }
+
 input[inputmode=decimal] { text-align: right }
 
 ul { margin: 0; padding: 0 }
@@ -64,9 +68,11 @@ main > aside
     top: 0;
   overflow: scroll; min-height: 100%; max-height: 100%  }
 
- .entity a:not(:hover),
-.process a:not(:hover)
+
+a.wiki-link:not(:hover),
+a.identifier:not(:hover)
   { text-decoration: none }
+
 
 .process .needs-recipe
     { color: var(--muted);
