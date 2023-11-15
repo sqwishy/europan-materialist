@@ -4,11 +4,12 @@
 
 :root
   { --panel: var(--solar84);
-    --input: var(--solar84);
+    --input: var(--solar96);
   --outline: var(--solar60);
+   --shadow: var(--solar48);
      --page: var(--solar72);
      --text: var(--solar00);
-    --muted: var(--solar12);
+    --muted: var(--solar24);
  --consumed: var(--solar-red48);
  --produced: var(--solar-cyan48); }
 
@@ -30,7 +31,7 @@ section, aside, footer
   font-variant-caps: small-caps;
           max-width: 20ch }
 
-hr { border: 0; height: 1px; background-color: var(--outline); }
+hr { border: 0; height: 0; border-bottom: 1px solid var(--outline); }
 
 p, .entity, .process, .cmd
   { margin: 10px }
@@ -151,6 +152,7 @@ a.identifier:not(:hover)
 
 .item
   { background-color: var(--panel);
+               color: var(--solar12);
               border: 0 solid var(--outline);
         border-width: 0 1px 0 1px }
 
@@ -164,10 +166,10 @@ a.identifier:not(:hover)
   {          color: var(--solar96);
            --muted: var(--solar84);
        text-shadow: 1px   1px var(--solar00);
-  background-color: var(--solar12);
-            border: 1px solid var(--solar00);
-        box-shadow: inset  1px  1px var(--solar24),
-                    inset -1px -1px var(--solar24) }
+  background-color: var(--solar24);
+            border: 1px solid var(--solar12);
+        box-shadow: inset  1px  1px var(--solar36),
+                    inset -1px -1px var(--solar36) }
 
 .item.stations + .item.stations
   { border-top: 0 }
@@ -224,6 +226,5 @@ a.identifier:not(:hover)
    flex-wrap: wrap; }
 
 .cmd > *
-  {    border: 1px solid var(--outline);
-    --outline: var(--solar48);
-   box-shadow: 3px 3px var(--outline); }
+  { --outline: var(--shadow);
+   box-shadow: 3px 3px var(--shadow); }
