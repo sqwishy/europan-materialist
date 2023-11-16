@@ -1,6 +1,5 @@
 @import "palette.css";
-
-@import url('https://fonts.googleapis.com/css2?family=Exo+2&family=Questrial&family=IBM+Plex+Mono&display=swap');
+@import "fonts.css";
 
 :root
   { --panel: var(--solar84);
@@ -20,7 +19,7 @@ body
     margin: 0 }
 
 footer
-  { font-family: 'Questrial', sans-serif;  }
+  { font-family: sans-serif;  }
 
 section, aside, footer
   { max-width: 50ch; }
@@ -141,11 +140,8 @@ a.identifier:not(:hover)
          padding-left: 0;
         padding-right: 0; }
 
-
-.random + .random-list
+.item.random + .random-list
   { margin-left: 1ch }
-.random .what
-  { font-style: italic }
 
 
 /* colors */

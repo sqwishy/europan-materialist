@@ -1,8 +1,12 @@
-import { createSignal, createContext, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
-import { createStore } from 'solid-js/store'
-import { Route, A, useSearchParams } from '@solidjs/router'
-import { Show, For } from 'solid-js/web'
+import { createSignal, createEffect, createContext, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
+import { A, useSearchParams } from '@solidjs/router'
+import { Show, For, Index } from 'solid-js/web'
 import * as Data from "./Data"
+
+
+const WIKI_BASE_URL = `https://barotraumagame.com/wiki/`;
+const TITLE_DEFAULT = `Europan Materialist`;
+
 
 const amt = (f: number) => f < -1
                          ? Math.abs(f)
@@ -12,7 +16,6 @@ const amt = (f: number) => f < -1
 const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 const unreachable = (n: never): never => n;
 // const dbg = v => console.log(v) || v;
-
 
 type Filter = string;
 
@@ -50,41 +53,59 @@ const noLocalize: Localize = _ => _
 const Locale = createContext<[Localize, Localize]>([noLocalize, noLocalize]);
 
 
-export const LoadingScreen = () => {
+export const Page = (self: { setTitle: (_: string) => void  }) => {
   const [resource] = createResource(Data.fetchStuff)
+  const hasResource = createMemo(() => !resource.loading && !resource.error && resource());
+
+  return (
+    <Show when={hasResource()} keyed fallback={<Loading resource={resource} />}>
+      {(stuff) => 
+        <>
+          <footer>
+            <p>
+              This is a directory of <a href="https://barotraumagame.com/">Barotrauma</a> crafting recipes.
+            </p>
+            <p>
+              Use the <strong>search at the bottom</strong> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
+            </p>
+            <p>
+              <small>
+                This site uses assets and content from Barotrauma.
+                It is unaffiliated with <a href="https://undertowgames.com/">Undertow Games</a> or anyone else.
+                It is impartial to all clown and husk related matters.
+              </small>
+            </p>
+          </footer>
+          <main>
+            <Content stuff={stuff} setTitle={self.setTitle} />
+          </main>
+        </>
+      }
+    </Show>
+  )
+}
+
+
+export const Loading = (self: { resource: any }) => {
   return (
     <>
-      <Show when={!resource.loading && !resource.error && resource()} keyed>
-        <footer>
-          <p>
-            This is a directory of <a href="https://barotraumagame.com/">Barotrauma</a> crafting recipes.
-          </p>
-          <p>
-            Use the <strong>search at the bottom</strong> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
-          </p>
-          <p>
-            This site uses assets and content from Barotrauma, property of <a href="https://undertowgames.com/">Undertow Games</a>.
-            This is a non-commercial project and is in no way affiliated with Undertow Games.
-          </p>
-        </footer>
-      </Show>
       <main>
-        <Show when={resource.loading}>
-          <div class="loading-screen">loading...</div>
-        </Show>
-        <Show when={resource.error}>
-          <div class="loading-screen"><strong>failed to load...</strong> {resource.error.toString()}</div>
-        </Show>
-        <Show when={!resource.loading && !resource.error && resource()} keyed>
-          {(stuff) => <Page stuff={stuff} />}
-        </Show>
+        <div class="loading-screen">
+          <Show when={self.resource.loading}>
+            loading...
+          </Show>
+          <Show when={self.resource.error}>
+            <strong>failed to load...</strong> {self.resource.error.toString()}
+          </Show>
+        </div>
       </main>
     </>
   )
 }
 
-export const Page = (props: { stuff: Data.Stuff }) => {
-  const [self, _] = splitProps(props, ["stuff"]);
+
+/* language select, result listing, and search input */
+export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void }) => {
 
   const [getLanguage, setLanguage] = createSignal('English')
 
@@ -104,6 +125,10 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 
   const getLimit = () => parseInt(searchParams.limit, 10) || 50
   const setLimit = (limit: number) => setSearchParams({ limit })
+
+  createEffect(() => self.setTitle(  getSearch()
+                                   ? `${getSearch()} — ${TITLE_DEFAULT}`
+                                   : TITLE_DEFAULT))
 
   const filteredResults = createMemo((): Results => {
     /* enforce case insensitive matching? */
@@ -232,6 +257,7 @@ export const Page = (props: { stuff: Data.Stuff }) => {
 type Update = { "search": string }
             | { "limit": number };
 
+
 function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }) {
   const [self, _] = splitProps(props, ["filter", "limit", "update"]);
   return (
@@ -266,20 +292,21 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
       <div class="entity">
         <div class="item">
           <span class="decoration"></span>
-          <span class="what"><Localized>{ identifier }</Localized></span>
+          <span class="what"><LocalizedIdentifier>{ identifier }</LocalizedIdentifier></span>
           <Sprite what={identifier} />
         </div>
         <div class="item">
           <span class="decoration"/>
           <span class="taglist">
-            <For each={tags}>
+            <Index each={tags}>
               {(tag) => <Identifier>{ tag }</Identifier>}
-            </For>
+            </Index>
           </span>
         </div>
       </div>
   )
 }
+
 
 function Process({ process } : { process: Data.Process }) {
   const { id, skills, time, stations, uses, needs_recipe } = process;
@@ -298,13 +325,13 @@ function Process({ process } : { process: Data.Process }) {
                 ⏱️ {time}s
               </Show>
             </span>
-            <span class="station"><Localized>{station}</Localized></span>
+            <span class="station"><LocalizedIdentifier>{station}</LocalizedIdentifier></span>
             <Show when={index() == 0}>
               <For each={Object.entries(skills)}>
                 {([skill, level]) => <span class="skill muted">{ skill } { level }</span>}
               </For>
             </Show>
-            <Sprite what={station}/>
+            <Sprite identifier={station}/>
           </div>
         )}
       </For>
@@ -343,35 +370,43 @@ function Part({ part } : { part: Data.Part }) {
         <span class='amount' classList={{ 'amount-multiple': Math.abs(amount) > 1 }}>
           { amt(amount) }
         </span>
-      <span class='what'><Localized>{ what }</Localized></span>
+      <span class='what'><LocalizedIdentifier>{ what }</LocalizedIdentifier></span>
       <Show when={condition_min || condition_max}>
         <span class='condition'>
           { pct(condition_min) } ❤️ { pct(condition_max) }
         </span>
       </Show>
-      <Sprite what={what} />
+      <Sprite identifier={what} />
     </div>
   );
 }
 
 
-function Sprite(props: { what: Data.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
-  const [self, rest] = splitProps(props, ["what", "class"]);
+function Sprite(props: { identifier: Data.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
+  const [self, rest] = splitProps(props, ["identifier", "class"]);
+
   return (
-    <span class={`sprite ${self.class || ''}`} {...rest} data-sprite={self.what}>&emsp;</span>
+    <span 
+      class={`sprite ${self.class || ''}`}
+      {...rest}
+      data-sprite={self.identifier}
+    >&emsp;</span>
   )
 }
 
+
 function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacement }) {
   const { weighted_random_with_replacement, amount } = random;
+  const [localize] = useContext(Locale);
+
   return (
     <>
       <div class="item part random"
            classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}
       >
         <span class='decoration'></span>
-        <span class='amount'>{ amount }</span>
-        <span class='what'>🎲 random</span>
+        <span class='amount'>{ amt(amount) }</span>
+        <span class='what'>🎲 <em>{localize('random')}</em></span>
       </div>
       {/* this ul kind of a hack so that last-of-type works */}
       <ul class="random-list">
@@ -383,12 +418,15 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
   )
 }
 
-function Localized({ children } : { children : Data.Identifier | Data.Money }) {
+
+function LocalizedIdentifier({ children } : { children : Data.Identifier | Data.Money }) {
   const [localize, toEnglish] = useContext(Locale);
+
   return (
       <>
         <a
-          class="wiki-link" href={`https://barotraumagame.com/wiki/${toEnglish(children)}`}
+          class="wiki-link"
+          href={`${WIKI_BASE_URL}${toEnglish(children)}`}
           target="blank"
           rel="noopener"
         >
@@ -399,6 +437,7 @@ function Localized({ children } : { children : Data.Identifier | Data.Money }) {
       </>
   )
 }
+
 
 function Identifier({ children } : { children : Data.Identifier }) {
   return <A href={`?q=${children}`} class="identifier">{children}</A>

@@ -1220,7 +1220,7 @@ if __name__ == "__main__":
                 dictionary["$"] = child.text
                 continue
 
-            if tag == "fabricatorrequiresrecipe":
+            if tag in ("fabricatorrequiresrecipe", "random"):
                 dictionary[tag] = child.text
                 continue
 
