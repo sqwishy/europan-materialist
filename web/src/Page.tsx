@@ -293,13 +293,13 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
         <div class="item">
           <span class="decoration"></span>
           <span class="what"><LocalizedIdentifier>{ identifier }</LocalizedIdentifier></span>
-          <Sprite what={identifier} />
+          <Sprite identifier={identifier} />
         </div>
         <div class="item">
           <span class="decoration"/>
           <span class="taglist">
             <Index each={tags}>
-              {(tag) => <Identifier>{ tag }</Identifier>}
+              {(tag) => <Identifier>{ tag() }</Identifier>}
             </Index>
           </span>
         </div>
