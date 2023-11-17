@@ -1120,13 +1120,13 @@ if __name__ == "__main__":
     for i, process in enumerate_rev(processes):
         for j, other in enumerate_rev(processes[i + 1 :]):
             if process.id == other.id:
-                logwarn("processes share the same `id`", l=process, r=other)
+                log_warning("processes share the same `id`", l=process, r=other)
 
     logtime("orphaning orphans")
 
     _unpruned_len = len(index)
 
-    identifiers_used = set()
+    identifiers_used: set[Identifier | Money] = set()
     for process in processes:
         identifiers_used.update(part.what for part in process.iter_parts())
         identifiers_used.update(process.stations)
@@ -1150,9 +1150,9 @@ if __name__ == "__main__":
                 sprites[item.identifier] = sprite
                 break
 
-        logtime("generating sprite css")
-
         write_sprites = os.devnull if args.dry_run else args.write_sprites
+
+        logtime(f"generating sprite css: {write_sprites}")
 
         with open(write_sprites, "w") as file:
 

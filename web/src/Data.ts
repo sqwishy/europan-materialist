@@ -28,8 +28,8 @@ export type Stuff = {
   i18n: Record<string, Record<string, string>>,
 }
 
-export async function fetchStuff(): Promise<Stuff> {
-  const res = await fetch(`${import.meta.env.BASE_URL}stuff.json`)
+export async function fetchStuff(url: string): Promise<Stuff> {
+  const res = await fetch(url)
   if (!res.ok)
     throw new Error(res.statusText)
   return await res.json();

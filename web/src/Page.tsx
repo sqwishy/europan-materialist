@@ -2,10 +2,11 @@ import { createSignal, createEffect, createContext, createMemo, createResource, 
 import { A, useSearchParams } from '@solidjs/router'
 import { Show, For, Index } from 'solid-js/web'
 import * as Data from "./Data"
+import stuffUrl from '../assets/stuff.json?url'
 
 
 const WIKI_BASE_URL = `https://barotraumagame.com/wiki/`;
-const TITLE_DEFAULT = `Europan Materialist`;
+const TITLE_DEFAULT = document.title; // `Europan Materialist`;
 
 
 const amt = (f: number) => f < -1
@@ -54,7 +55,7 @@ const Locale = createContext<[Localize, Localize]>([noLocalize, noLocalize]);
 
 
 export const Page = (self: { setTitle: (_: string) => void  }) => {
-  const [resource] = createResource(Data.fetchStuff)
+  const [resource] = createResource(() => Data.fetchStuff(stuffUrl))
   const hasResource = createMemo(() => !resource.loading && !resource.error && resource());
 
   return (

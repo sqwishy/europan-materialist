@@ -15,8 +15,8 @@
 body
   { font: 1rem/1.1 'Exo 2', sans-serif;
     background-color: var(--page);
-    color:            var(--text);
-    margin: 0 }
+               color: var(--text);
+              margin: 0 }
 
 footer
   { font-family: sans-serif;  }
