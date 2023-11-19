@@ -3,7 +3,7 @@
 
 :root
   { --panel: var(--solar84);
-    --input: var(--solar96);
+    --input: var(--solar84);
   --outline: var(--solar60);
    --shadow: var(--solar48);
      --page: var(--solar72);
@@ -47,6 +47,8 @@ button, input[type=text], select
     border:           1px solid var(--outline);
     padding:    0.5ch 0.4ch;
     box-sizing: content-box; }
+
+input[type=checkbox] { height: 1.7ch; width: 1.7ch; margin: 0.8ch }
 
 button          { cursor: pointer; }
 button:disabled { cursor: not-allowed }
@@ -174,7 +176,7 @@ a.identifier:not(:hover)
   { content: '×'; line-height: 0 }
 
 /* stripe repeating */
-.item > .decoration
+/*.item > */ .decoration
   { --pointyness: 4px; --gap: 8px; --from-bottom: 4px;
     --tail-vee:  calc(100% - var(--from-bottom));
     --tail-wing: calc(var(--tail-vee) - var(--pointyness));
@@ -183,7 +185,7 @@ a.identifier:not(:hover)
 
 /* calc(100% + 1px) calc(0% - 1px) helps prevent a funny horizontal gap/line
  * between decorations, still shows up a lot on edge */
-.item > .decoration
+/*.item > */ .decoration
   { clip-path: polygon(0   calc(0% - 1px),  100%  calc(0% - 1px),  100% var(--head-wing),   50% var(--head-vee),   0 var(--head-wing),
                        0 var(--tail-wing),   50% var(--tail-vee),  100% var(--tail-wing),  100% calc(100% + 1px),  0 calc(100% + 1px)) }
 
@@ -192,17 +194,16 @@ a.identifier:not(:hover)
   { clip-path: polygon(0  calc(0% - 1px),  100%   calc(0% - 1px),  100% var(--head-wing),  50% var(--head-vee),  0 var(--head-wing)) }
 
 
-.item > .decoration
-  { background-color: var(--solar60) }
+/*.item > */ .decoration
+  { background-color: var(--solar60);
+    /* cute or cringe ??? */
+    background-image: linear-gradient(to right, #ffffff00, #ffffff20 50%, #ffffff00 50%) }
 
 .item.consumed > .decoration
   { background-color: var(--consumed) }
 
 .item.produced > .decoration
   { background-color: var(--produced) }
-
-.item > .decoration /* cute or cringe ??? */
-  { background-image: linear-gradient(to right, #ffffff00, #ffffff20 50%, #ffffff00 50%) }
 
 
 .identifier
@@ -218,9 +219,67 @@ a.identifier:not(:hover)
      z-index: 1;
     grid-gap: 1ch;
      display: flex;
-   max-width: 100%;
-   flex-wrap: wrap; }
+   max-width: 50ch }
 
-.cmd > *
+
+.cmd > * { flex: 0 0 auto }
+.cmd > .search { flex: 1 1 min-content; min-width: 0 }
+
+.cmd > input
   { --outline: var(--shadow);
+       border: 1px solid var(--outline);
    box-shadow: 3px 3px var(--shadow); }
+
+.cmd .context-filter
+  { display: flex }
+.cmd .context-filter[data-hidden]
+  { display: none }
+
+.cmd .context-filter  label
+  { display: flex; background: var(--input) }
+
+.cmd .context-filter  label
+  { position: relative }
+.cmd .context-filter  label > input
+  { position: absolute;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    margin: 0; appearance: none;
+    cursor: pointer; }
+
+
+.cmd .context-filter { box-shadow: none; border: 0 }
+.cmd .context-filter  label > input
+  { --outline: var(--shadow);
+  --highlight: transparent;
+       border: 1px solid var(--outline);
+       border-right-width: 0;
+   box-shadow: inset  1px  1px var(--highlight),
+               inset -1px -1px var(--highlight),
+               2px 4px var(--shadow); }
+.cmd .context-filter  label:last-child > input
+  { border-right-width: 1px }
+
+@media (pointer: fine)
+{ .cmd .context-filter label > input:hover
+    { --highlight: var(--solar-cyan72);
+        --outline: var(--solar-cyan00);
+         --shadow: var(--solar-cyan72) } }
+
+.cmd .context-filter label > input:checked:not(:hover)
+  { --highlight: var(--solar-cyan96);
+      --outline: var(--solar00);
+       --shadow: var(--solar-cyan00) }
+
+.cmd .context-filter .decoration
+  { width: 24px; margin: 0 8px; pointer-events: none }
+
+.cmd .context-filter-consumed > .decoration
+  { background-color: var(--consumed) }
+.cmd .context-filter-produced > .decoration
+  { background-color: var(--produced) }
+
+.cmd .context-filter-button .decoration
+  { background-image: linear-gradient(290deg, var(--solar60),      var(--solar60) 33%,
+                                                var(--consumed) 33%, var(--consumed) 66%,
+                                                var(--produced) 66%) }

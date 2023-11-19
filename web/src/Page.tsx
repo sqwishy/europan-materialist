@@ -1,12 +1,13 @@
 import { createSignal, createEffect, createContext, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
 import { A, useSearchParams } from '@solidjs/router'
 import { Show, For, Index } from 'solid-js/web'
+
 import * as Data from "./Data"
 import stuffUrl from '../assets/stuff.json?url'
 
 
 const WIKI_BASE_URL = `https://barotraumagame.com/wiki/`;
-const TITLE_DEFAULT = document.title; // `Europan Materialist`;
+const TITLE_DEFAULT = document.title;
 
 
 const amt = (f: number) => f < -1
@@ -18,6 +19,14 @@ const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 const unreachable = (n: never): never => n;
 // const dbg = v => console.log(v) || v;
 
+// type Filter = {
+//   substring: string,
+//   context: {
+//     entities: boolean,
+//     consumed: boolean,
+//     produced: boolean,
+//   },
+// }
 type Filter = string;
 
 type Results = {
@@ -258,22 +267,57 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 type Update = { "search": string }
             | { "limit": number };
 
-
 function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }) {
   const [self, _] = splitProps(props, ["filter", "limit", "update"]);
+
+  const [getShowContextOptions, setShowContextOptions] = createSignal(true);
+  const [getContext, setContext] = createSignal({
+    entities: true,
+    consumed: true,
+    produced: true,
+  });
+
   return (
     <>
+      {/* substring search */}
       <input
-        id="cmdline"
         type="text"
-        class="cmdline"
-        size="32"
+        class="search"
         placeholder="search..."
         accessKey="k"
         list="cmdcomplete"
         value={self.filter}
         onchange={(e) => self.update({ "search": e.currentTarget.value })}
       />
+      {/* context filter, entity/consumed/produced */}
+      <div
+        class="context-filter context-filter-options"
+        data-hidden={getShowContextOptions() ? undefined : ""}
+      >
+        <label class="context-filter-entity">
+          <span class="decoration"></span>
+          <input type="checkbox" name="filter-entity" />
+        </label>
+        <label class="context-filter-consumed" >
+          <span class="decoration"></span>
+          <input type="checkbox" name="filter-consumed" />
+        </label>
+        <label class="context-filter-produced" >
+          <span class="decoration"></span>
+          <input type="checkbox" name="filter-produced" />
+        </label>
+      </div>
+      <div class="context-filter context-filter-button">
+        <label data-selected={getShowContextOptions()}>
+          <span class="decoration"></span>
+          <input
+            type="checkbox"
+            checked={getShowContextOptions()}
+            onchange={(e) => setShowContextOptions(e.currentTarget.checked)}
+          />
+        </label>
+      </div>
+      {/* limit */}
       <input
         id="limit"
         type="text"
