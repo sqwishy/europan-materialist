@@ -19,15 +19,21 @@ const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 const unreachable = (n: never): never => n;
 // const dbg = v => console.log(v) || v;
 
-// type Filter = {
-//   substring: string,
-//   context: {
-//     entities: boolean,
-//     consumed: boolean,
-//     produced: boolean,
-//   },
-// }
-type Filter = string;
+const eithers =
+  <T,>(a: (_: T) => boolean, b: (_: T) => boolean) =>
+  (t: T) => a(t) || b(t)
+
+const boths =
+  <T,>(a: (_: T) => boolean, b: (_: T) => boolean) =>
+  (t: T) => a(t) && b(t)
+
+
+type FilterContext = null | "only-consumed" | "only-produced";
+
+type Filter = {
+  substring: string,
+  context: FilterContext,
+}
 
 type Results = {
   entities: [/* identifier */ Data.Identifier, /* tags */ Data.Identifier[]][],
@@ -35,31 +41,86 @@ type Results = {
 };
 
 
+const filterToString =
+  (f: Filter): string =>
+      f.context === "only-consumed"
+    ? `-${f.substring}`
+    : f.context === "only-produced"
+    ? `*${f.substring}`
+    : f.substring
+
+
+/* enforces case insensitive matching */
+const stringToFilter =
+  (s: string): Filter =>
+      s.startsWith("-")
+    ? { context: "only-consumed",
+        substring: s.slice(1).toLowerCase() }
+    : s.startsWith("*")
+    ? { context: "only-produced",
+        substring: s.slice(1).toLowerCase() }
+    : { context: null,
+        substring: s.toLowerCase() }
+
+
 const resultsLength = (r: Results) => r.entities.length + r.processes.length
 
 
-const filterProcesses =
-  (f: Filter, localize: Localize) =>
-  (p: Data.Process) =>
-  /* TODO probably doesn't search under WeightedRandomWithReplacement? */
-     p.uses.some(i => "what" in i && localize(i.what).includes(f))
-  || p.stations.some(s => localize(s).includes(f))
+type AmountedFilter = (_: { amount: number }) => boolean
+type PartFilter = (_: Data.Part) => boolean
+type UsedInFilter = (_: Data.Part | Data.WeightedRandomWithReplacement) => boolean
+type IdentifierFilter = (_: Data.Identifier) => boolean
+
+const filtersAmount =
+  (context : "only-consumed" | "only-produced"): AmountedFilter =>
+      context === "only-consumed"
+    ? ({ amount }) => amount < 0
+    : ({ amount }) => amount > 0
 
 
-const filterEntities =
-  (f: Filter, localize: Localize) =>
-  ([ identifier, tags ]: [ Data.Identifier, Data.Identifier[] ]) =>
-     localize(identifier).includes(f)
-  || tags.some(t => localize(t).includes(f))
+const filtersIdentifier =
+  ({ substring, localize }: { substring: string, localize?: Localize }): IdentifierFilter =>
+    substring === ""
+  ? (_) => true
+  :    (identifier) => identifier.includes(substring)
+    || (!!localize && localize(identifier).includes(substring))
 
 
-const eithers =
-  <T,>(a: (_: T) => boolean, b: (_: T) => boolean) =>
-  (t: T) => a(t) || b(t)
+const filtersPart =
+  ({ identifier, amount }: { identifier: IdentifierFilter, amount?: AmountedFilter }) =>
+     amount === undefined
+  ? (i: Data.Part) => identifier(i.what)
+  : (i: Data.Part) => identifier(i.what) && amount(i)
+
+
+const filtersUsedInProcess =
+  ({ part }: { part: PartFilter }) =>
+  (i: Data.Part | Data.WeightedRandomWithReplacement): boolean =>
+      "what" in i
+    ? part(i)
+    : i.weighted_random_with_replacement.some(part)
+
+
+const filtersProcesses =
+  ({ identifier, amount, usedIn }:
+   { identifier: IdentifierFilter, amount?: AmountedFilter, usedIn: UsedInFilter }) =>
+    amount === undefined
+  ? (p: Data.Process): boolean => p.uses.some(usedIn)
+                               || p.stations.some(identifier)
+  : (p: Data.Process): boolean => p.uses.some(usedIn)
+
+
+const filtersEntities =
+  ({ amount, identifier }: { identifier: IdentifierFilter, amount?: AmountedFilter }) =>
+    !amount
+  ? ([ i, tags ]: [ Data.Identifier, Data.Identifier[] ]) =>
+       identifier(i) || tags.some(identifier)
+  : (_: any) => false
 
 
 type Localize = (_: string) => string
 const noLocalize: Localize = _ => _
+const localizesToLowerWith = (dictionary: Record<string, string>) => (s: string) => dictionary[s]?.toLowerCase() || s
 const Locale = createContext<[Localize, Localize]>([noLocalize, noLocalize]);
 
 
@@ -122,9 +183,6 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
   const localize: Localize =
     (text: string) => self.stuff.i18n[getLanguage()]?.[text] || text
 
-  const localizeToLower: Localize =
-    (text: string) => self.stuff.i18n[getLanguage()]?.[text]?.toLowerCase() || text
-
   const toEnglish: Localize =
     (text: string) => self.stuff.i18n.English?.[text] || text
 
@@ -140,26 +198,32 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
                                    ? `${getSearch()} — ${TITLE_DEFAULT}`
                                    : TITLE_DEFAULT))
 
-  const filteredResults = createMemo((): Results => {
-    /* enforce case insensitive matching? */
-    const search = getSearch().toLowerCase();
-    const hasLanguage = getLanguage() in self.stuff.i18n;
+  const getFilter = createMemo((): Filter => stringToFilter(getSearch()))
 
-    /* don't show entities unless there is a search */
+  const filteredResults = createMemo((): Results => {
+    const filter = getFilter();
+
+    /* don't show entities unless there is a substring search */
     /* why can't fucking typescript infer the type for `entities` when this return type is explicit ??? */
     let entities: [string, string[]][] = [];
     let processes = self.stuff.processes
 
-    if (search.length) {
+    if (filter.substring.length) {
+      const identifier = filtersIdentifier({
+        substring: filter.substring,
+        localize: getLanguage() in self.stuff.i18n
+                ? localizesToLowerWith(self.stuff.i18n[getLanguage()])
+                : undefined,
+      })
+      const amount = filter.context === null
+                   ? undefined
+                   : filtersAmount(filter.context)
+      const part = filtersPart({ amount, identifier })
+      const usedIn = filtersUsedInProcess({ part })
+
       entities = Object.entries(self.stuff.tags_by_identifier)
-                       .filter(hasLanguage
-                             ? eithers(filterEntities(search, noLocalize),
-                                       filterEntities(search, localizeToLower))
-                             : filterEntities(search, noLocalize))
-      processes = processes.filter(hasLanguage
-                                 ? eithers(filterProcesses(search, noLocalize),
-                                           filterProcesses(search, localizeToLower))
-                                 : filterProcesses(search, noLocalize))
+                       .filter(filtersEntities({ amount, identifier }))
+      processes = processes.filter(filtersProcesses({ amount, identifier, usedIn }))
     }
 
     return { entities, processes }
@@ -190,7 +254,10 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
   const update = (update: Update) => {
     if ("search" in update)
-      setSearch(update.search.trim())
+      setSearch(filterToString({ ...getFilter(), substring: update.search.trim() }))
+
+    else if ("context" in update)
+      setSearch(filterToString({ ...getFilter(), context: update.context }))
 
     else if ("limit" in update)
       setLimit(update.limit)
@@ -248,7 +315,7 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
       <section class="cmd">
         <Command
-          filter={getSearch()}
+          filter={getFilter()}
           limit={getLimit()}
           update={update} />
       </section>
@@ -265,17 +332,17 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
 
 type Update = { "search": string }
+            | { "context": FilterContext }
             | { "limit": number };
 
 function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }) {
   const [self, _] = splitProps(props, ["filter", "limit", "update"]);
-
-  const [getShowContextOptions, setShowContextOptions] = createSignal(true);
-  const [getContext, setContext] = createSignal({
-    entities: true,
-    consumed: true,
-    produced: true,
-  });
+  const cycleContext =
+    () => self.update({ context:   self.filter.context === null
+                                 ? "only-consumed"
+                                 : self.filter.context === "only-consumed"
+                                 ? "only-produced"
+                                 : null })
 
   return (
     <>
@@ -286,37 +353,18 @@ function Command(props: { filter: Filter, limit: number, update: (_: Update) => 
         placeholder="search..."
         accessKey="k"
         list="cmdcomplete"
-        value={self.filter}
+        value={self.filter.substring}
         onchange={(e) => self.update({ "search": e.currentTarget.value })}
       />
-      {/* context filter, entity/consumed/produced */}
-      <div
-        class="context-filter context-filter-options"
-        data-hidden={getShowContextOptions() ? undefined : ""}
+      {/* context filter */}
+      <button
+        class="context-filter"
+        onclick={() => cycleContext()}
+        data-current={self.filter.context}
       >
-        <label class="context-filter-entity">
-          <span class="decoration"></span>
-          <input type="checkbox" name="filter-entity" />
-        </label>
-        <label class="context-filter-consumed" >
-          <span class="decoration"></span>
-          <input type="checkbox" name="filter-consumed" />
-        </label>
-        <label class="context-filter-produced" >
-          <span class="decoration"></span>
-          <input type="checkbox" name="filter-produced" />
-        </label>
-      </div>
-      <div class="context-filter context-filter-button">
-        <label data-selected={getShowContextOptions()}>
-          <span class="decoration"></span>
-          <input
-            type="checkbox"
-            checked={getShowContextOptions()}
-            onchange={(e) => setShowContextOptions(e.currentTarget.checked)}
-          />
-        </label>
-      </div>
+        <span class="consumed"><span class="decoration"></span></span>
+        <span class="produced"><span class="decoration"></span></span>
+      </button>
       {/* limit */}
       <input
         id="limit"

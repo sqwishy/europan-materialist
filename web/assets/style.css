@@ -48,8 +48,6 @@ button, input[type=text], select
     padding:    0.5ch 0.4ch;
     box-sizing: content-box; }
 
-input[type=checkbox] { height: 1.7ch; width: 1.7ch; margin: 0.8ch }
-
 button          { cursor: pointer; }
 button:disabled { cursor: not-allowed }
 
@@ -225,61 +223,47 @@ a.identifier:not(:hover)
 .cmd > * { flex: 0 0 auto }
 .cmd > .search { flex: 1 1 min-content; min-width: 0 }
 
-.cmd > input
+
+.cmd > *
   { --outline: var(--shadow);
        border: 1px solid var(--outline);
    box-shadow: 3px 3px var(--shadow); }
 
+
 .cmd .context-filter
-  { display: flex }
-.cmd .context-filter[data-hidden]
-  { display: none }
+  { display: flex;
+    padding: 0;
+    width: 40px }
 
-.cmd .context-filter  label
-  { display: flex; background: var(--input) }
 
-.cmd .context-filter  label
+.cmd .context-filter
   { position: relative }
-.cmd .context-filter  label > input
+.cmd .context-filter > *
   { position: absolute;
     left: 0; top: 0;
     width: 100%; height: 100%;
     margin: 0; appearance: none;
-    cursor: pointer; }
+    display: flex }
 
-
-.cmd .context-filter { box-shadow: none; border: 0 }
-.cmd .context-filter  label > input
-  { --outline: var(--shadow);
-  --highlight: transparent;
-       border: 1px solid var(--outline);
-       border-right-width: 0;
-   box-shadow: inset  1px  1px var(--highlight),
-               inset -1px -1px var(--highlight),
-               2px 4px var(--shadow); }
-.cmd .context-filter  label:last-child > input
-  { border-right-width: 1px }
-
-@media (pointer: fine)
-{ .cmd .context-filter label > input:hover
-    { --highlight: var(--solar-cyan72);
-        --outline: var(--solar-cyan00);
-         --shadow: var(--solar-cyan72) } }
-
-.cmd .context-filter label > input:checked:not(:hover)
-  { --highlight: var(--solar-cyan96);
-      --outline: var(--solar00);
-       --shadow: var(--solar-cyan00) }
 
 .cmd .context-filter .decoration
   { width: 24px; margin: 0 8px; pointer-events: none }
 
-.cmd .context-filter-consumed > .decoration
-  { background-color: var(--consumed) }
-.cmd .context-filter-produced > .decoration
-  { background-color: var(--produced) }
 
-.cmd .context-filter-button .decoration
-  { background-image: linear-gradient(290deg, var(--solar60),      var(--solar60) 33%,
-                                                var(--consumed) 33%, var(--consumed) 66%,
-                                                var(--produced) 66%) }
+.cmd .context-filter > *
+  { --reach: 70%;
+    --floor: calc(100% + 1px) }
+.cmd .context-filter:not([data-current]) > .consumed
+  { clip-path: polygon(0    0%,  var(--reach) 0%,  calc(100% - var(--reach)) var(--floor),     0 var(--floor)) }
+.cmd .context-filter:not([data-current]) > .produced
+  { clip-path: polygon(100% 0%,  var(--reach) 0%,  calc(100% - var(--reach)) var(--floor),  100% var(--floor)) }
+
+.cmd .context-filter[data-current='only-consumed'] .produced
+  { display: none }
+.cmd .context-filter[data-current='only-produced'] .consumed
+  { display: none }
+
+.cmd .context-filter > .consumed > .decoration
+  { background-color: var(--consumed) }
+.cmd .context-filter > .produced > .decoration
+  { background-color: var(--produced) }
