@@ -30,6 +30,13 @@ const boths =
 
 type FilterContext = null | "only-consumed" | "only-produced";
 
+const cycleContext =
+  (context: FilterContext) => context === null
+                            ? "only-consumed"
+                            : context === "only-consumed"
+                            ? "only-produced"
+                            : null
+
 type Filter = {
   substring: string,
   context: FilterContext,
@@ -337,12 +344,6 @@ type Update = { "search": string }
 
 function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }) {
   const [self, _] = splitProps(props, ["filter", "limit", "update"]);
-  const cycleContext =
-    () => self.update({ context:   self.filter.context === null
-                                 ? "only-consumed"
-                                 : self.filter.context === "only-consumed"
-                                 ? "only-produced"
-                                 : null })
 
   return (
     <>
@@ -359,7 +360,7 @@ function Command(props: { filter: Filter, limit: number, update: (_: Update) => 
       {/* context filter */}
       <button
         class="context-filter"
-        onclick={() => cycleContext()}
+        onclick={() => self.update({ "context": cycleContext(self.filter.context) })}
         data-current={self.filter.context}
       >
         <span class="consumed"><span class="decoration"></span></span>
