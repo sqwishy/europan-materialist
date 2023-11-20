@@ -185,6 +185,9 @@ export const Loading = (self: { resource: any }) => {
 /* language select, result listing, and search input */
 export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void }) => {
 
+  /* fix search bar while mouse is over it to keep it from jumping around  */
+  const [getFixedSearch, setFixedSearch] = createSignal<null | number>(null)
+
   const [getLanguage, setLanguage] = createSignal('English')
 
   const localize: Localize =
@@ -320,7 +323,13 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
       <hr/>
 
-      <section class="cmd">
+      <section
+        class="cmd"
+        data-fixed={getFixedSearch() !== null ? '' : undefined}
+        style={{ top: getFixedSearch() !== null ? `${getFixedSearch()}px` : undefined }}
+        onmouseenter={(e) => setFixedSearch(e.target.getBoundingClientRect().top) }
+        onmouseleave={() => setFixedSearch(null) }
+      >
         <Command
           filter={getFilter()}
           limit={getLimit()}

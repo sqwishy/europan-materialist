@@ -220,6 +220,8 @@ a.identifier:not(:hover)
     grid-gap: 1ch;
      display: flex }
 
+.cmd[data-fixed]
+  { position: fixed; width: 100%; bottom: unset }
 
 .cmd > * { flex: 0 0 auto }
 .cmd > .search { flex: 1 1 min-content; min-width: 0 }
