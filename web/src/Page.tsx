@@ -1,13 +1,15 @@
-import { createSignal, createEffect, createContext, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
+import { createSignal, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
 import { A, useSearchParams } from '@solidjs/router'
 import { Show, For, Index } from 'solid-js/web'
 
 import * as Data from "./Data"
+import * as Locale from "./Locale"
+import * as Filter from "./Filter"
 import stuffUrl from '../assets/stuff.json?url'
 
 
 const WIKI_BASE_URL = `https://barotraumagame.com/wiki/`;
-const TITLE_DEFAULT = document.title;
+const TITLE_DEFAULT = /* this goofs up with hot code reloading lulz */ document.title;
 
 
 const amt = (f: number) => f < -1
@@ -19,27 +21,19 @@ const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 const unreachable = (n: never): never => n;
 // const dbg = v => console.log(v) || v;
 
-const eithers =
-  <T,>(a: (_: T) => boolean, b: (_: T) => boolean) =>
-  (t: T) => a(t) || b(t)
 
-const boths =
-  <T,>(a: (_: T) => boolean, b: (_: T) => boolean) =>
-  (t: T) => a(t) && b(t)
-
-
-type FilterContext = null | "only-consumed" | "only-produced";
+type SearchContext = null | "only-consumed" | "only-produced";
 
 const cycleContext =
-  (context: FilterContext) => context === null
+  (context: SearchContext) => context === null
                             ? "only-consumed"
                             : context === "only-consumed"
                             ? "only-produced"
                             : null
 
-type Filter = {
+type Search = {
   substring: string,
-  context: FilterContext,
+  context: SearchContext,
 }
 
 type Results = {
@@ -48,8 +42,8 @@ type Results = {
 };
 
 
-const filterToString =
-  (f: Filter): string =>
+const searchToString =
+  (f: Search): string =>
       f.context === "only-consumed"
     ? `-${f.substring}`
     : f.context === "only-produced"
@@ -58,8 +52,8 @@ const filterToString =
 
 
 /* enforces case insensitive matching */
-const stringToFilter =
-  (s: string): Filter =>
+const stringToSearch =
+  (s: string): Search =>
       s.startsWith("-")
     ? { context: "only-consumed",
         substring: s.slice(1).toLowerCase() }
@@ -71,64 +65,6 @@ const stringToFilter =
 
 
 const resultsLength = (r: Results) => r.entities.length + r.processes.length
-
-
-type AmountedFilter = (_: { amount: number }) => boolean
-type PartFilter = (_: Data.Part) => boolean
-type UsedInFilter = (_: Data.Part | Data.WeightedRandomWithReplacement) => boolean
-type IdentifierFilter = (_: Data.Identifier) => boolean
-
-const filtersAmount =
-  (context : "only-consumed" | "only-produced"): AmountedFilter =>
-      context === "only-consumed"
-    ? ({ amount }) => amount < 0
-    : ({ amount }) => amount > 0
-
-
-const filtersIdentifier =
-  ({ substring, localize }: { substring: string, localize?: Localize }): IdentifierFilter =>
-    substring === ""
-  ? (_) => true
-  :    (identifier) => identifier.includes(substring)
-    || (!!localize && localize(identifier).includes(substring))
-
-
-const filtersPart =
-  ({ identifier, amount }: { identifier: IdentifierFilter, amount?: AmountedFilter }) =>
-     amount === undefined
-  ? (i: Data.Part) => identifier(i.what)
-  : (i: Data.Part) => identifier(i.what) && amount(i)
-
-
-const filtersUsedInProcess =
-  ({ part }: { part: PartFilter }) =>
-  (i: Data.Part | Data.WeightedRandomWithReplacement): boolean =>
-      "what" in i
-    ? part(i)
-    : i.weighted_random_with_replacement.some(part)
-
-
-const filtersProcesses =
-  ({ identifier, amount, usedIn }:
-   { identifier: IdentifierFilter, amount?: AmountedFilter, usedIn: UsedInFilter }) =>
-    amount === undefined
-  ? (p: Data.Process): boolean => p.uses.some(usedIn)
-                               || p.stations.some(identifier)
-  : (p: Data.Process): boolean => p.uses.some(usedIn)
-
-
-const filtersEntities =
-  ({ amount, identifier }: { identifier: IdentifierFilter, amount?: AmountedFilter }) =>
-    !amount
-  ? ([ i, tags ]: [ Data.Identifier, Data.Identifier[] ]) =>
-       identifier(i) || tags.some(identifier)
-  : (_: any) => false
-
-
-type Localize = (_: string) => string
-const noLocalize: Localize = _ => _
-const localizesToLowerWith = (dictionary: Record<string, string>) => (s: string) => dictionary[s]?.toLowerCase() || s
-const Locale = createContext<[Localize, Localize]>([noLocalize, noLocalize]);
 
 
 export const Page = (self: { setTitle: (_: string) => void  }) => {
@@ -190,50 +126,48 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
   const [getLanguage, setLanguage] = createSignal('English')
 
-  const localize: Localize =
-    (text: string) => self.stuff.i18n[getLanguage()]?.[text] || text
+  const localize: Locale.ize = Locale.izes(self.stuff.i18n[getLanguage()])
 
-  const toEnglish: Localize =
-    (text: string) => self.stuff.i18n.English?.[text] || text
+  const toEnglish: Locale.ize = Locale.izes(self.stuff.i18n.English)
 
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const getSearch = () => searchParams.q?.trim() || ''
-  const setSearch = (q: string) => setSearchParams({ q })
+  const getSearchText = () => searchParams.q?.trim() || ''
+  const setSearchText = (q: string) => setSearchParams({ q })
 
   const getLimit = () => parseInt(searchParams.limit, 10) || 50
   const setLimit = (limit: number) => setSearchParams({ limit })
 
-  createEffect(() => self.setTitle(  getSearch()
-                                   ? `${getSearch()} — ${TITLE_DEFAULT}`
+  createEffect(() => self.setTitle(  getSearchText()
+                                   ? `${getSearchText()} — ${TITLE_DEFAULT}`
                                    : TITLE_DEFAULT))
 
-  const getFilter = createMemo((): Filter => stringToFilter(getSearch()))
+  const getSearch = createMemo((): Search => stringToSearch(getSearchText()))
 
   const filteredResults = createMemo((): Results => {
-    const filter = getFilter();
+    const search = getSearch();
 
     /* don't show entities unless there is a substring search */
     /* why can't fucking typescript infer the type for `entities` when this return type is explicit ??? */
     let entities: [string, string[]][] = [];
     let processes = self.stuff.processes
 
-    if (filter.substring.length) {
-      const identifier = filtersIdentifier({
-        substring: filter.substring,
+    if (search.substring.length) {
+      const identifier = Filter.sIdentifier({
+        substring: search.substring,
         localize: getLanguage() in self.stuff.i18n
-                ? localizesToLowerWith(self.stuff.i18n[getLanguage()])
+                ? Locale.izesToLower(self.stuff.i18n[getLanguage()])
                 : undefined,
       })
-      const amount = filter.context === null
+      const amount = search.context === null
                    ? undefined
-                   : filtersAmount(filter.context)
-      const part = filtersPart({ amount, identifier })
-      const usedIn = filtersUsedInProcess({ part })
+                   : Filter.sAmount(search.context)
+      const part = Filter.sPart({ amount, identifier })
+      const usedIn = Filter.sUsedInProcess({ part })
 
       entities = Object.entries(self.stuff.tags_by_identifier)
-                       .filter(filtersEntities({ amount, identifier }))
-      processes = processes.filter(filtersProcesses({ amount, identifier, usedIn }))
+                       .filter(Filter.sEntities({ amount, identifier }))
+      processes = processes.filter(Filter.sProcesses({ amount, identifier, usedIn }))
     }
 
     return { entities, processes }
@@ -264,10 +198,10 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
   const update = (update: Update) => {
     if ("search" in update)
-      setSearch(filterToString({ ...getFilter(), substring: update.search.trim() }))
+      setSearchText(searchToString({ ...getSearch(), substring: update.search.trim() }))
 
     else if ("context" in update)
-      setSearch(filterToString({ ...getFilter(), context: update.context }))
+      setSearchText(searchToString({ ...getSearch(), context: update.context }))
 
     else if ("limit" in update)
       setLimit(update.limit)
@@ -302,14 +236,14 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
       {/* items / stuff list */}
 
       <section>
-        <Locale.Provider value={[localize, toEnglish]}>
+        <Locale.Context.Provider value={[localize, toEnglish]}>
           <For each={limitedResults().entities}>
             {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
           </For>
           <For each={limitedResults().processes}>
             {(p) => <Process process={p} />}
           </For>
-        </Locale.Provider>
+        </Locale.Context.Provider>
       </section>
 
       <p>
@@ -331,7 +265,7 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
         onmouseleave={() => setFixedSearch(null) }
       >
         <Command
-          filter={getFilter()}
+          search={getSearch()}
           limit={getLimit()}
           update={update} />
       </section>
@@ -348,11 +282,11 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
 
 type Update = { "search": string }
-            | { "context": FilterContext }
+            | { "context": SearchContext }
             | { "limit": number };
 
-function Command(props: { filter: Filter, limit: number, update: (_: Update) => void }) {
-  const [self, _] = splitProps(props, ["filter", "limit", "update"]);
+function Command(props: { search: Search, limit: number, update: (_: Update) => void }) {
+  const [self, _] = splitProps(props, ["search", "limit", "update"]);
 
   return (
     <>
@@ -363,14 +297,14 @@ function Command(props: { filter: Filter, limit: number, update: (_: Update) => 
         placeholder="search..."
         accessKey="k"
         list="cmdcomplete"
-        value={self.filter.substring}
+        value={self.search.substring}
         onchange={(e) => self.update({ "search": e.currentTarget.value })}
       />
-      {/* context filter */}
+      {/* context search */}
       <button
-        class="context-filter"
-        onclick={() => self.update({ "context": cycleContext(self.filter.context) })}
-        data-current={self.filter.context}
+        class="context-search"
+        onclick={() => self.update({ "context": cycleContext(self.search.context) })}
+        data-current={self.search.context}
       >
         <span class="consumed"><span class="decoration"></span></span>
         <span class="produced"><span class="decoration"></span></span>
@@ -413,7 +347,8 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
 
 function Process({ process } : { process: Data.Process }) {
   const { id, skills, time, stations, uses, needs_recipe } = process;
-  const [localize] = useContext(Locale);
+  const [localize] = useContext(Locale.Context);
+
   return (
     <div class="process" id={id}>
       {/* parts consumed */}
@@ -465,6 +400,7 @@ function UsesList({ uses } : { uses: (Data.WeightedRandomWithReplacement | Data.
 function Part({ part } : { part: Data.Part }) {
   const { what, amount, condition } = part;
   const [condition_min, condition_max] = condition || [null, null];
+
   return (
     <div class="item part"
          classList={{ 'consumed': amount < 0, 'produced': amount > 0 }}
@@ -500,7 +436,7 @@ function Sprite(props: { identifier: Data.Identifier } & JSX.HTMLAttributes<HTML
 
 function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacement }) {
   const { weighted_random_with_replacement, amount } = random;
-  const [localize] = useContext(Locale);
+  const [localize] = useContext(Locale.Context);
 
   return (
     <>
@@ -523,7 +459,7 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
 
 
 function LocalizedIdentifier({ children } : { children : Data.Identifier | Data.Money }) {
-  const [localize, toEnglish] = useContext(Locale);
+  const [localize, toEnglish] = useContext(Locale.Context);
 
   return (
       <>
