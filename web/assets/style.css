@@ -42,10 +42,10 @@ body
                color: var(--text);
               margin: 0 }
 
-footer
+header, footer
   { font-family: sans-serif;  }
 
-section, aside, footer
+section, aside, header, footer
   { max-width: 50ch; }
 
 .loading-screen
@@ -54,7 +54,7 @@ section, aside, footer
   font-variant-caps: small-caps;
           max-width: 20ch }
 
-hr { border: 0; height: 0; border-bottom: 1px solid var(--outline); }
+hr { margin: 10px; border: 0; height: 0; border-bottom: 1px solid var(--outline); }
 
 p, .entity, .process
   { margin: 10px }
@@ -244,7 +244,7 @@ a.identifier:not(:hover)
 
 .cmd
   { position: sticky;
-      bottom: 1ch;
+      bottom: 10px;
      z-index: 1;
     grid-gap: 1ch;
      display: flex }

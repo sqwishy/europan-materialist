@@ -41,12 +41,23 @@ RUN npm install
 ADD web/index.html \
     web/index.html \
     web/tsconfig.json \
-    web/vite.config.js .
+    web/vite.config.js \
+    .git-commit-hash \
+    .
 ADD web/src src
 ADD web/public public
 ADD web/assets assets
 
 CMD npm x -- vite
+
+
+FROM webinstall AS webbuild
+
+# alternatively, just put the date in vite.config.js defines or something?
+# and import .git-commit-hash?raw in javascript? idk
+RUN env VITE_BUILD_DATE=$(date -Is) \
+        VITE_BUILD_HASH=$(cat .git-commit-hash) \
+        npm x -- vite build
 
 # to upload to cloudflare pages
 #
@@ -60,7 +71,12 @@ CMD npm x -- vite
 # podman run --rm \
 #            -v (pass s/cloudflare/apikeys | psub):/run/secrets/cloudflare \
 #            however-you-tagged-the-build ash \
-#            -c    'npm x -- vite build \
-#                && npm install wrangler  \
-#                && env $(cat /run/secrets/cloudflare) \
-#                   npm x -- wrangler pages deploy --project-name materialist-next ./dist'
+#            -c   'npm install wrangler  \
+#               && env $(cat /run/secrets/cloudflare) \
+#                  npm x -- wrangler pages deploy --project-name materialist ./dist'
+
+# unused...
+#
+# FROM scratch AS webdist
+#
+# COPY --from=webbuild /build/web/dist /webdist

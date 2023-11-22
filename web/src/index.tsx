@@ -45,10 +45,15 @@ const Main = () => {
 
   createEffect(() => (document.title = title()));
 
+  const build = {
+    hash: import.meta.env.VITE_BUILD_HASH,
+    date: new Date(import.meta.env.VITE_BUILD_DATE || "2222-02-22T00:00:00-00:00"),
+  };
+
   return (
     <ErrorBoundary fallback={DumbErrorMessage}>
       <Router base={import.meta.env.BASE_URL}>
-        <Page setTitle={setTitle} />
+        <Page setTitle={setTitle} build={/*@once*/ build} />
       </Router>
     </ErrorBoundary>
   )

@@ -10,6 +10,7 @@ import stuffUrl from '../assets/stuff.json?url'
 
 const WIKI_BASE_URL = `https://barotraumagame.com/wiki/`;
 const TITLE_DEFAULT = /* this goofs up with hot code reloading lulz */ document.title;
+const DATETIME_FMT = Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
 
 
 const amt = (f: number) => f < -1
@@ -67,7 +68,10 @@ const stringToSearch =
 const resultsLength = (r: Results) => r.entities.length + r.processes.length
 
 
-export const Page = (self: { setTitle: (_: string) => void  }) => {
+export type Build = { hash?: string, date: Date }
+
+
+export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
   const [resource] = createResource(() => Data.fetchStuff(stuffUrl))
   const hasResource = createMemo(() => !resource.loading && !resource.error && resource());
 
@@ -75,14 +79,33 @@ export const Page = (self: { setTitle: (_: string) => void  }) => {
     <Show when={hasResource()} keyed fallback={<Loading resource={resource} />}>
       {(stuff) => 
         <>
-          <footer>
+          <header>
             <p>
               This is a directory of <a href="https://barotraumagame.com/">Barotrauma</a> crafting recipes.
             </p>
             <p>
               Use the <strong>search at the bottom</strong> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
             </p>
-            <p><small><a href="https://github.com/sqwishy/europan-materialist">github</a></small></p>
+          </header>
+
+          <main>
+            <Content stuff={stuff} setTitle={self.setTitle} />
+          </main>
+
+          <footer>
+            <p>
+              <small>
+                <a href="https://github.com/sqwishy/europan-materialist">
+                  github
+                </a>
+                <Show when={ self.build.hash }>
+                  {" "}
+                  <span class="identifier">{ self.build.hash }</span>
+                </Show>
+                { " " }
+                — generated on { DATETIME_FMT.format(self.build.date) }
+              </small>
+            </p>
             <p>
               <small>
                 This site uses assets and content from Barotrauma.
@@ -91,9 +114,6 @@ export const Page = (self: { setTitle: (_: string) => void  }) => {
               </small>
             </p>
           </footer>
-          <main>
-            <Content stuff={stuff} setTitle={self.setTitle} />
-          </main>
         </>
       }
     </Show>
