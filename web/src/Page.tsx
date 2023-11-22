@@ -82,6 +82,7 @@ export const Page = (self: { setTitle: (_: string) => void  }) => {
             <p>
               Use the <strong>search at the bottom</strong> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
             </p>
+            <p><small><a href="https://github.com/sqwishy/europan-materialist">github</a></small></p>
             <p>
               <small>
                 This site uses assets and content from Barotrauma.
@@ -269,6 +270,8 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
           limit={getLimit()}
           update={update} />
       </section>
+
+      <p class="surrogate"><input type="text"/></p>
 
       <datalist id="cmdcomplete">
         <For each={complete()}>

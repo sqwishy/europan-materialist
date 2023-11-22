@@ -60,6 +60,8 @@ p, .entity, .process
   { margin: 10px }
 .cmd
   { padding: 0 10px; box-sizing: border-box }
+.surrogate
+  { display: none; visibility: hidden }
 
 a, input, button, select
   { background:  transparent;
@@ -249,6 +251,8 @@ a.identifier:not(:hover)
 
 .cmd[data-fixed]
   { position: fixed; width: 100%; bottom: unset }
+.cmd[data-fixed] + .surrogate
+  { display: block }
 
 .cmd > * { flex: 0 0 auto }
 .cmd > .search { flex: 1 1 min-content; min-width: 0 }
