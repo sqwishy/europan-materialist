@@ -2,15 +2,39 @@
 @import "fonts.css";
 
 :root
-  { --panel: var(--solar84);
+  {  --item: var(--solar84);
     --input: var(--solar84);
   --outline: var(--solar60);
    --shadow: var(--solar48);
      --page: var(--solar72);
      --text: var(--solar00);
     --muted: var(--solar24);
- --consumed: var(--solar-red48);
- --produced: var(--solar-cyan48); }
+ --consumed: var(--solar-red50);
+ --produced: var(--solar-cyan50);
+        --station-item: var(--solar24);
+     --station-outline: var(--solar12);
+        --station-text: var(--solar96);
+ --station-text-shadow: var(--solar00);
+       --station-muted: var(--solar84);
+       --station-light: var(--solar36); }
+
+@media (prefers-color-scheme: dark) {
+:root
+  {  --item: var(--ayu24);
+    --input: var(--ayu24);
+  --outline: var(--ayu36);
+   --shadow: var(--ayu00);
+     --page: var(--ayu12);
+     --text: var(--ayu96);
+    --muted: var(--ayu72);
+ --consumed: #F07171;
+ --produced: #4CBF99;
+        --station-item: var(--ayu36);
+     --station-outline: var(--ayu24);
+        --station-text: var(--ayu96);
+ --station-text-shadow: var(--ayu12);
+       --station-muted: var(--ayu84);
+       --station-light: var(--ayu48); } }
 
 body
   { font: 1rem/1.1 'Exo 2', sans-serif;
@@ -149,8 +173,8 @@ a.identifier:not(:hover)
 /* colors */
 
 .item
-  { background-color: var(--panel);
-               color: var(--solar12);
+  { background-color: var(--item);
+               color: var(--text);
               border: 0 solid var(--outline);
         border-width: 0 1px 0 1px }
 
@@ -161,13 +185,13 @@ a.identifier:not(:hover)
   { border-bottom-width: 1px }
 
 .item.stations
-  {          color: var(--solar96);
-           --muted: var(--solar84);
-       text-shadow: 1px   1px var(--solar00);
-  background-color: var(--solar24);
-            border: 1px solid var(--solar12);
-        box-shadow: inset  1px  1px var(--solar36),
-                    inset -1px -1px var(--solar36) }
+  {          color: var(--station-text);
+           --muted: var(--station-muted);
+       text-shadow: 1px   1px var(--station-text-shadow);
+  background-color: var(--station-item);
+            border: 1px solid var(--station-outline);
+        box-shadow: inset  1px  1px var(--station-light),
+                    inset -1px -1px var(--station-light) }
 
 .item.stations + .item.stations
   { border-top: 0 }
@@ -195,9 +219,12 @@ a.identifier:not(:hover)
 
 
 /*.item > */ .decoration
-  { background-color: var(--solar60);
+  { background-color: var(--outline);
     /* cute or cringe ??? */
     background-image: linear-gradient(to right, #ffffff00, #ffffff20 50%, #ffffff00 50%) }
+@media (prefers-color-scheme: dark)
+  { .decoration
+    { background-image: linear-gradient(to right, #ffffff00, #ffffff10 50%, #ffffff00 50%) } }
 
 .item.consumed > .decoration
   { background-color: var(--consumed) }

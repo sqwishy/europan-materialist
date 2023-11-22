@@ -1,4 +1,14 @@
 :root {
+--ayu00: #1f2430;
+--ayu12: #373d4b;
+--ayu24: #464d5c;
+--ayu36: #5e6677;
+--ayu48: #707a8c;
+--ayu60: #a3b3c4;
+--ayu72: #cdd6df;
+--ayu84: #f8f9fa;
+--ayu96: #ffffff;
+
 --solar00: #002b36;
 --solar12: #073642;
 --solar24: #455c64;
@@ -9,16 +19,8 @@
 --solar84: #eee8d5;
 --solar96: #fdf6e3;
 
---solar-red00: #814e48;
---solar-red24: #b72d29;
---solar-red48: #dc322f;
---solar-red72: #f37367;
---solar-red96: #ead1cd;
+--solar-red50: #dc322f;
 
---solar-cyan00: #236a64;
---solar-cyan24: #00847c;
---solar-cyan48: #2aa198;
---solar-cyan72: #6ebfb7;
---solar-cyan96: #c3dedb;
+--solar-cyan50: #2aa198;
 
 }
