@@ -147,9 +147,8 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
   const [getLanguage, setLanguage] = createSignal('English')
 
-  const localize: Locale.ize = Locale.izes(self.stuff.i18n[getLanguage()])
-
-  const toEnglish: Locale.ize = Locale.izes(self.stuff.i18n.English)
+  const localize: Locale.ize = Locale.izes(() => self.stuff.i18n[getLanguage()])
+  const toEnglish: Locale.ize = Locale.izes(() => self.stuff.i18n.English)
 
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -177,7 +176,7 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
       const identifier = Filter.sIdentifier({
         substring: search.substring,
         localize: getLanguage() in self.stuff.i18n
-                ? Locale.izesToLower(self.stuff.i18n[getLanguage()])
+                ? Locale.izesToLower(() => self.stuff.i18n[getLanguage()])
                 : undefined,
       })
       const amount = search.context === null
