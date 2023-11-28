@@ -249,10 +249,11 @@ a.identifier:not(:hover)
     grid-gap: 1ch;
      display: flex }
 
-.cmd[data-fixed]
-  { position: fixed; width: 100%; bottom: unset }
-.cmd[data-fixed] + .surrogate
-  { display: block }
+@media (pointer: fine)
+  { .cmd[data-fixed]
+      { position: fixed; width: 100%; bottom: unset }
+    .cmd[data-fixed] + .surrogate
+      { display: block } }
 
 .cmd > * { flex: 0 0 auto }
 .cmd > .search { flex: 1 1 min-content; min-width: 0 }
