@@ -58,23 +58,29 @@ hr { margin: 10px; border: 0; height: 0; border-bottom: 1px solid var(--outline)
 
 p, .entity, .process
   { margin: 10px }
-.cmd
+.cmd, .results-length
   { padding: 0 10px; box-sizing: border-box }
 .surrogate
   { display: none; visibility: hidden }
+
 
 a, input, button, select
   { background:  transparent;
     color:       inherit;
     font:        inherit;
     text-align:  inherit;
-    text-shadow: inherit }
+    text-shadow: inherit;
+    line-height: normal }
+
 
 button, input[type=text], select
-  { background-color: var(--input);
+  { padding:    0.5ch 0.4ch;
+    box-sizing: content-box;
+    background-color: var(--input);
     border:           1px solid var(--outline);
-    padding:    0.5ch 0.4ch;
-    box-sizing: content-box; }
+    box-shadow:  2px  2px var(--shadow),
+                -1px -1px var(--shadow); }
+
 
 button          { cursor: pointer; }
 button:disabled { cursor: not-allowed }
@@ -88,13 +94,8 @@ ul { margin: 0; padding: 0 }
 
 /* positioning */
 
-main > aside
-  {
-    position: fixed;
-    left: 50ch;
-    bottom: 0;
-    top: 0;
-  overflow: scroll; min-height: 100%; max-height: 100%  }
+.results-length { display: flex; align-items: center }
+.results-length > *:first-child { flex-grow: 1 }
 
 
 a.wiki-link:not(:hover),
@@ -191,9 +192,11 @@ a.identifier:not(:hover)
            --muted: var(--station-muted);
        text-shadow: 1px   1px var(--station-text-shadow);
   background-color: var(--station-item);
-            border: 1px solid var(--station-outline);
-        box-shadow: inset  1px  1px var(--station-light),
-                    inset -1px -1px var(--station-light) }
+            border: 1px solid var(--station-light);
+            border-top-color: var(--station-outline);
+         border-bottom-color: var(--station-outline);
+        box-shadow: inset 0px  1px var(--station-light),
+                    inset 0px -1px var(--station-light) }
 
 .item.stations + .item.stations
   { border-top: 0 }
@@ -246,7 +249,6 @@ a.identifier:not(:hover)
   { position: sticky;
       bottom: 10px;
      z-index: 1;
-    grid-gap: 1ch;
      display: flex }
 
 @media (pointer: fine)
@@ -257,12 +259,6 @@ a.identifier:not(:hover)
 
 .cmd > * { flex: 0 0 auto }
 .cmd > .search { flex: 1 1 min-content; min-width: 0 }
-
-
-.cmd > *
-  { --outline: var(--shadow);
-       border: 1px solid var(--outline);
-   box-shadow: 3px 3px var(--shadow); }
 
 
 .cmd .context-search

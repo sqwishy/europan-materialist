@@ -77,7 +77,7 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
 
   return (
     <Show when={hasResource()} keyed fallback={<Loading resource={resource} />}>
-      {(stuff) => 
+      {(stuff) =>
         <>
           <header>
             <p>
@@ -266,12 +266,24 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
         </Locale.Context.Provider>
       </section>
 
-      <p>
-        showing <b>{resultsLength(limitedResults())}</b> of <b>{resultsLength(filteredResults())}</b>
+      <section class="results-length">
+        <span>
+          showing <b>{resultsLength(limitedResults())}</b
+          > of <b>{resultsLength(filteredResults())}</b>
+        </span>
         <Show when={resultsLength(limitedResults()) < resultsLength(filteredResults())}>
-            <button onclick={() => update({ "limit": resultsLength(limitedResults()) + 100 })}>+100</button>
+          <input
+            id="limit"
+            type="text"
+            size="4"
+            inputmode="decimal"
+            placeholder="limit..."
+            value={getLimit()}
+            onchange={(e) => update({ "limit": parseInt(e.currentTarget.value, 10) || 0 })}
+          />
+          <button onclick={() => update({ "limit": resultsLength(limitedResults()) + 100 })}>+100</button>
         </Show>
-      </p>
+      </section>
 
       {/* <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p> */}
 
@@ -286,7 +298,6 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
       >
         <Command
           search={getSearch()}
-          limit={getLimit()}
           update={update} />
       </section>
 
@@ -307,8 +318,9 @@ type Update = { "search": string }
             | { "context": SearchContext }
             | { "limit": number };
 
-function Command(props: { search: Search, limit: number, update: (_: Update) => void }) {
-  const [self, _] = splitProps(props, ["search", "limit", "update"]);
+
+function Command(props: { search: Search, update: (_: Update) => void }) {
+  const [self, _] = splitProps(props, ["search", "update"]);
 
   return (
     <>
@@ -331,16 +343,6 @@ function Command(props: { search: Search, limit: number, update: (_: Update) => 
         <span class="consumed"><span class="decoration"></span></span>
         <span class="produced"><span class="decoration"></span></span>
       </button>
-      {/* limit */}
-      <input
-        id="limit"
-        type="text"
-        size="6"
-        inputmode="decimal"
-        placeholder="limit..."
-        value={self.limit}
-        onchange={(e) => self.update({ "limit": parseInt(e.currentTarget.value, 10) || 0 })}
-      />
     </>
   )
 }
@@ -376,7 +378,7 @@ function Process({ process } : { process: Data.Process }) {
       {/* parts consumed */}
       <UsesList uses={uses.filter(({ amount }) => amount < 0)} />
 
-      {/* station and time */} 
+      {/* station and time */}
       <For each={stations}>
         {(station, index) => (
           <div class="item stations">
@@ -447,7 +449,7 @@ function Sprite(props: { identifier: Data.Identifier } & JSX.HTMLAttributes<HTML
   const [self, rest] = splitProps(props, ["identifier", "class"]);
 
   return (
-    <span 
+    <span
       class={`sprite ${self.class || ''}`}
       {...rest}
       data-sprite={self.identifier}
