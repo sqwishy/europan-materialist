@@ -129,7 +129,7 @@ def log_warnings(it, *, path=None):
             yield item
 
 
-def log_warning(message, **kwargs):
+def log_warning(message, path=None, **kwargs):
     print(ansi.magenta(message), file=sys.stderr)
 
     for key, value in kwargs.items():
@@ -140,6 +140,43 @@ def log_warning(message, **kwargs):
             print(f"{prefix}...\n{value}", file=sys.stderr)
         else:
             print(f"{prefix}{value}", file=sys.stderr)
+
+
+def format_log_value(v, path=None):
+    if isinstance(v, etree._Element):
+        # etree.tostringlist does nothing interesting?
+        lines = etree.tostring(v).decode().strip().splitlines(keepends=True)
+
+        if not lines:
+            return ""
+
+        if v.sourceline is None or path is None:
+            return "".join(lines)
+
+        [head, *tail] = lines
+        lines = [head] + _dedent_strings(tail)
+        width = len(str(v.sourceline + len(lines) - 1))
+
+        return "".join(
+            f"{path}:{no:{width}} {line}"
+            for no, line in zip(count(v.sourceline), lines)
+        )
+
+    elif is_dataclass(v):
+        return repr(v)
+
+    elif isinstance(v, Exception):
+        return repr(v)
+
+    else:
+        return v
+
+
+def _dedent_strings(strings):
+    if not strings:
+        return []
+    indent = min(re.match(" *", s).end() for s in strings)
+    return [s[indent:] for s in strings]
 
 
 Identifier = NewType("Identifier", str)
@@ -185,43 +222,6 @@ def xmlbool(value: str) -> bool:
         return False
     else:
         raise ValueError(value)
-
-
-def format_log_value(v, path):
-    if isinstance(v, etree._Element):
-        # etree.tostringlist does nothing interesting?
-        lines = etree.tostring(v).decode().strip().splitlines(keepends=True)
-
-        if not lines:
-            return ""
-
-        if v.sourceline is None or path is None:
-            return "".join(lines)
-
-        [head, *tail] = lines
-        lines = [head] + _dedent_strings(tail)
-        width = len(str(v.sourceline + len(lines) - 1))
-
-        return "".join(
-            f"{path}:{no:{width}} {line}"
-            for no, line in zip(count(v.sourceline), lines)
-        )
-
-    elif is_dataclass(v):
-        return repr(v)
-
-    elif isinstance(v, Exception):
-        return repr(v)
-
-    else:
-        return v
-
-
-def _dedent_strings(strings):
-    if not strings:
-        return []
-    indent = min(re.match(" *", s).end() for s in strings)
-    return [s[indent:] for s in strings]
 
 
 def serialize_dataclass(value):
@@ -357,23 +357,27 @@ def index_document(doc) -> Iterator[BaroItem | Warning]:
                 )
             continue
 
-        # there are a lot of attributes on these elements,
-        # we don't care to explicitly ignore them so don't
-        # yield from attrs.warnings()
-        attrs = Attribs.from_element(item)
+        yield from extract_BaroItem(item)
 
-        # FIXME TODO the fields in might not be accurate if variantof is present ...
-        try:
-            yield BaroItem(
-                element=item,
-                identifier=attrs.use("identifier", convert=make_identifier),
-                nameidentifier=attrs.or_none("nameidentifier"),
-                tags=attrs.use("tags", convert=split_identifier_list, default=[]),
-                variant_of=attrs.or_none("variantof", convert=make_identifier)
-                or attrs.or_none("inherit", convert=make_identifier),
-            )
-        except Error as err:
-            yield err.as_warning()
+
+def extract_BaroItem(element) -> Iterator[BaroItem | Warning]:
+    # there are a lot of attributes on these elements,
+    # we don't care to explicitly ignore them so don't
+    # yield from attrs.warnings()
+
+    attrs = Attribs.from_element(element)
+
+    try:
+        yield BaroItem(
+            element=element,
+            identifier=attrs.use("identifier", convert=make_identifier),
+            nameidentifier=attrs.or_none("nameidentifier"),
+            tags=attrs.use("tags", convert=split_identifier_list, default=[]),
+            variant_of=attrs.or_none("variantof", convert=make_identifier)
+            or attrs.or_none("inherit", convert=make_identifier),
+        )
+    except Error as err:
+        yield err.as_warning()
 
 
 def extract_Sprite_under(el):
@@ -771,6 +775,51 @@ def extract_Price(el, **kwargs) -> Iterator[Process | Warning]:
         yield price
 
 
+def load_and_apply_index_variants(index_: dict[Identifier, BaroItem]):
+    index = {}
+
+    # copy index keeping only variations where we know about the variant_of?
+    for key, item in index_.items():
+        if item.is_variant and item.variant_of not in index_:
+            log_warning(
+                ansi.magenta("item variant_of not in index"),
+                element=item.element,
+                variant_of=item.variant_of,
+            )
+        else:
+            index[key] = item
+
+    graph = {
+        identifier: {item.variant_of}
+        for identifier, item in index.items()
+        if item.variant_of is not None
+    }
+    for identifier in TopologicalSorter(graph).static_order():
+        if identifier is None:
+            # don't how this happens but mypy thinks it can so whatever
+            continue
+
+        item = index[identifier]
+
+        if not item.is_variant:
+            continue
+
+        full_element = apply_variant(
+            index[item.variant_of].element,
+            item.element,
+            only_tags=("fabricate", "deconstruct", "price", "inventoryicon", "sprite"),
+        )
+
+        # this is basically to inherit tags from the variant_of element
+        # if this fails for some reason, should the item be removed from index?
+
+        for item in log_warnings(extract_BaroItem(full_element)):
+            index[identifier] = item
+            break
+
+    return index
+
+
 def apply_variant(
     base: etree._Element, variant: etree._Element, only_tags=()
 ) -> etree._Element:
@@ -798,7 +847,7 @@ def apply_variant(
     see BarotraumaShared/SharedSource/Prefabs/IImplementsVariants.cs
     """
     applied = etree.Element(variant.tag)
-    applied.sourceline = variant.sourceline  # TODO kind of a lie ?
+    applied.sourceline = variant.sourceline  # kind of a lie ?
     # mypy upset that we're passing a generator???
     applied.attrib.update((k.lower(), v) for k, v in base.attrib.iteritems())  # type: ignore
     applied.attrib.update((k.lower(), v) for k, v in variant.attrib.iteritems())  # type: ignore
@@ -840,6 +889,48 @@ def apply_variant(
     applied.extend(c for c in variant_children if c is not None)
 
     return applied
+
+
+def tidy_processes(processes: Iterator[Process]) -> Iterator[Process]:
+    for process in processes:
+
+        process.uses.sort(key=lambda p: p.amount)
+
+        # if parts consumed or produced are listed twice with the same
+        # information, combine their amounts into one item
+
+        for i, part in enumerate_rev(process.uses[:-1]):
+
+            if isinstance(part, RandomChoices):
+                continue
+
+            for j, other in enumerate_rev(process.uses[i + 1 :]):
+
+                if isinstance(other, RandomChoices):
+                    continue
+
+                if part.can_combine(other):
+                    part.combine_in_place(other)
+                    del process.uses[i + 1 + j]
+
+        yield process
+
+
+def retain_only_process_items(
+    index: dict[Identifier, BaroItem], processes: list[Process]
+) -> dict[Identifier, BaroItem]:
+    identifiers_used: set[Identifier | Money] = set()
+
+    for process in processes:
+        identifiers_used.update(part.what for part in process.iter_parts())
+        identifiers_used.update(process.stations)
+
+    return {
+        identifier: item
+        for identifier, item in index.items()
+        if identifier in identifiers_used
+        or any(tag in identifiers_used for tag in item.tags)
+    }
 
 
 def drop_prefix(text, prefix):
@@ -1027,7 +1118,7 @@ def load_xml_rglob(paths: list[str], glob: str):
             yield path, doc
 
 
-if __name__ == "__main__":
+def main():
     from argparse import ArgumentParser
 
     # fmt: off
@@ -1043,6 +1134,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # load every xml file and build an index
+    # TODO use the <contentpackage> as a reference for what files to read and
+    # version stuff?
 
     logtime("building index")
 
@@ -1054,90 +1147,25 @@ if __name__ == "__main__":
 
     logtime("loading variants")
 
-    # remove variations where we don't know about the variant_of?
-    for item in list(index.values()):
-        if item.is_variant and item.variant_of not in index:
-            log_warning(
-                ansi.magenta("item variant_of not in index"),
-                element=item.element,
-                variant_of=item.variant_of,
-            )
-            del index[item.identifier]
-
-    graph = {
-        identifier: {item.variant_of}
-        for identifier, item in index.items()
-        if item.variant_of is not None
-    }
-    for identifier in TopologicalSorter(graph).static_order():
-        if identifier is None:
-            # don't how this happens but mypy thinks it can so whatever
-            continue
-
-        item = index[identifier]
-
-        if not item.is_variant:
-            continue
-
-        variant_of = index[item.variant_of]
-
-        item.element = apply_variant(
-            variant_of.element,
-            item.element,
-            only_tags=("fabricate", "deconstruct", "price", "inventoryicon", "sprite"),
-        )
+    index = load_and_apply_index_variants(index)
 
     logtime("reading processes from items")
 
     processes: list[Process] = []
 
     for item in index.values():
-        processes.extend(log_warnings(extract_Item(item.element)))
-
-    logtime(f"tidying/abbreviating")
-
-    for process in processes:
-
-        process.uses.sort(key=lambda p: p.amount)
-
-        # if parts consumed or produced are listed twice with the same
-        # information, combine their amounts into one item
-
-        for i, part in enumerate_rev(process.uses[:-1]):
-
-            if isinstance(part, RandomChoices):
-                continue
-
-            for j, other in enumerate_rev(process.uses[i + 1 :]):
-
-                if isinstance(other, RandomChoices):
-                    continue
-
-                if part.can_combine(other):
-                    part.combine_in_place(other)
-                    del process.uses[i + 1 + j]
+        processes.extend(tidy_processes(log_warnings(extract_Item(item.element))))
 
     for i, process in enumerate_rev(processes):
         for j, other in enumerate_rev(processes[i + 1 :]):
             if process.id == other.id:
                 log_warning("processes share the same `id`", l=process, r=other)
 
-    logtime("orphaning orphans")
+    logtime(f"pruning {len(index)} items for {len(processes)} processes")
 
-    _unpruned_len = len(index)
+    index = retain_only_process_items(index, processes)
 
-    identifiers_used: set[Identifier | Money] = set()
-    for process in processes:
-        identifiers_used.update(part.what for part in process.iter_parts())
-        identifiers_used.update(process.stations)
-
-    index = {
-        k: item
-        for k, item in index.items()
-        if k in identifiers_used or any(t in identifiers_used for t in item.tags)
-    }
-
-    logtime(f"{len(processes)} Process for {len(index)} (was {_unpruned_len}) items")
+    logtime(f"retained {len(index)} items")
 
     if args.write_sprites and args.sprites:
 
@@ -1265,3 +1293,7 @@ if __name__ == "__main__":
             pass
 
     logtime("woo hoo!")
+
+
+if __name__ == "__main__":
+    main()
