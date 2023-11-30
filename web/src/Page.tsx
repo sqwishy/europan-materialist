@@ -102,8 +102,8 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
                   {" "}
                   <span class="identifier">{ self.build.hash }</span>
                 </Show>
-                { " " }
-                — generated on { DATETIME_FMT.format(self.build.date) }
+                \ — generated on { DATETIME_FMT.format(self.build.date) }
+                \ — { stuff.name } { stuff.version }
               </small>
             </p>
             <p>
