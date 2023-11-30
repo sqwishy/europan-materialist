@@ -19,11 +19,8 @@ WORKDIR /build
 ADD baro-data.py .
 RUN mkdir -p web/assets
 RUN python3 baro-data.py \
-            --items /Content/Items \
-                    /Content/Map \
-            --texts /Content/Texts \
-            --sprites /Content \
-            -- web/assets/sprites.css \
+            --content /Content \
+            --write-sprites web/assets/sprites.css \
             > web/assets/stuff.json
 
 

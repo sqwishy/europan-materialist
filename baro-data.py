@@ -1,4 +1,3 @@
-import io
 import json
 import os
 import re
@@ -7,11 +6,13 @@ from base64 import b64encode
 from collections import defaultdict
 from copy import copy
 from dataclasses import dataclass, is_dataclass, fields, field
+from io import BytesIO, StringIO
 from graphlib import TopologicalSorter
 from itertools import count, chain
 from lxml import etree
 from operator import itemgetter
 from pathlib import Path
+from functools import partial
 from typing import (
     Union,
     NewType,
@@ -216,9 +217,9 @@ def split_int_pair(value: str) -> tuple[int, int]:
 
 
 def xmlbool(value: str) -> bool:
-    if value == "true":
+    if value.lower() == "true":
         return True
-    elif value == "false":
+    elif value.lower() == "false":
         return False
     else:
         raise ValueError(value)
@@ -299,12 +300,6 @@ class Process(object):
                 yield from uses.weighted_random_with_replacement
             else:
                 yield uses
-
-
-@dataclass
-class NeedsVariantOf(object):
-    identifier: Identifier
-    variantof: Identifier
 
 
 @dataclass
@@ -795,17 +790,18 @@ def load_and_apply_index_variants(index_: dict[Identifier, BaroItem]):
         if item.variant_of is not None
     }
     for identifier in TopologicalSorter(graph).static_order():
-        if identifier is None:
-            # don't how this happens but mypy thinks it can so whatever
-            continue
-
-        item = index[identifier]
-
-        if not item.is_variant:
+        # I don't think `identifier` or `index[item.variant_of]` are ever None
+        # mypy is too fucking stupid to know that so here we are ...
+        if (
+            identifier is None
+            or (item := index[identifier]) is None
+            or item.variant_of is None
+            or (variant_of := index[item.variant_of]) is None
+        ):
             continue
 
         full_element = apply_variant(
-            index[item.variant_of].element,
+            variant_of.element,
             item.element,
             only_tags=("fabricate", "deconstruct", "price", "inventoryicon", "sprite"),
         )
@@ -1035,14 +1031,6 @@ def sign(i: int):
     return 1 if i >= 0 else -1
 
 
-def rglobpaths(paths: list[str], glob: str):
-    for path in map(Path, paths):
-        if path.is_file():
-            yield path
-        else:
-            yield from path.rglob(glob)
-
-
 _path_cache: dict[str, dict[str, Path]] = {}
 
 
@@ -1101,47 +1089,226 @@ def load_sprite_from_file(
 
 
 def to_base64(image: "PIL.Image.Image", format="webp") -> str:
-    buf = io.BytesIO()
+    buf = BytesIO()
     image.save(buf, format=format)
     return b64encode(buf.getvalue()).decode()
 
 
-def load_xml_rglob(paths: list[str], glob: str):
-    for path in rglobpaths(paths, glob):
+def load_xmls(paths: list[Path]) -> Iterator[tuple[Path, etree._Document]]:
+    for path in paths:
         try:
             with path.open() as file:
                 doc = etree.parse(file)
-        except OSError as err:
-            print("uh oh %s: %s", path, err, file=sys.stderr)
+
+        except (OSError, etree.Error) as err:
+            log_warning(err, file=file)
             continue
+
         else:
             yield path, doc
 
 
-def main():
+def stdout_name() -> str:
+    try:
+        return os.readlink(f"/proc/self/fd/1")
+    except OSError:
+        return "stdout"
+
+
+@dataclass
+class BaroContentPackageMod(object):
+    modversion: str
+    steamworkshopid: str
+
+
+@dataclass
+class BaroContentPackage(object):
+    # items and texts are unsanitized and unchecked, may start with %ModDir%
+    # https://regalis11.github.io/BaroModDoc/Intro/XML.html#barotrauma-specific-notes
+    items: list[Path]
+    texts: list[Path]
+    path: Path
+    name: str
+    gameversion: str
+    mod: BaroContentPackageMod | None = None
+
+    def __str__(self):
+        return self.name
+
+
+def find_ContentPackage_element(xmlpath: Path, peek=512) -> etree._Element | None:
+    with xmlpath.open("rb") as file:
+        if peek:
+            if b"<contentpackage" not in file.read(peek).lower():
+                return None
+
+            file.seek(0)
+
+        for event, element in etree.iterparse(file, events=("start",)):
+
+            if element.tag.lower() == "contentpackage":
+                return element
+
+            else:
+                break  # only check the root element
+
+        return None
+
+
+def extract_BaroContentPackage(
+    element, *, path: Path
+) -> Iterator[BaroContentPackage | Warning]:
+    attrs = Attribs.from_element(element)
+    attrs.ignore("altnames", "corepackage", "expectedhash")
+
+    modversion = attrs.use("modversion", default=None)
+    if modversion is None:
+        mod = None
+    else:
+        mod = BaroContentPackageMod(
+            modversion=modversion,
+            steamworkshopid=attrs.use("steamworkshopid", default=None),
+        )
+
+    package = BaroContentPackage(
+        items=[],
+        texts=[],
+        name=attrs.use("name"),
+        gameversion=attrs.use("gameversion"),
+        path=path,
+    )
+
+    yield from attrs.warnings()
+
+    resolve_path = partial(resolve_content_package_element_path, package_path=path)
+
+    for child in element:
+        tag = child.tag.lower()
+
+        if tag == "item":
+            dest = package.items
+        elif tag == "text":
+            dest = package.texts
+        else:
+            continue
+
+        a = Attribs.from_element(child)
+        try:
+            item_path = a.use("file", convert=resolve_path)
+        except Error as err:
+            yield err.as_warning()
+        else:
+            dest.append(item_path)
+        yield from a.warnings()
+
+    yield package
+
+
+# TODO should merge this with find_texture_path_on_fs
+def resolve_content_package_element_path(path_: str, package_path: Path) -> Path:
+    """sanitize a path provided by a <contentpackage> or raise ValueError
+
+    The file must exist on the filesytem and be a file and not a symlink and be
+    relative to / descendent under the package path.
+    """
+    if rel := drop_prefix(path_, "%ModDir%/"):
+        path = package_path / rel
+    elif rel := drop_prefix(path_, "Content/"):  # HACK HACK HACK
+        path = package_path / rel
+    else:
+        path = package_path / path_
+
+    if path.is_file() and not path.is_symlink() and path.is_relative_to(package_path):
+        return path
+
+    else:
+        raise ValueError("path is not an actual file under the given package path")
+
+
+@dataclass
+class Package(object):
+    name: str
+    version: str
+    steamworkshopid: str | None
+    tags_by_identifier: dict[Identifier, list[Identifier]]
+    processes: list[Process]
+    # {language: {identifier: humantext}}
+    i18n: dict[str, dict[str, str]]
+    sprites_css: StringIO
+
+
+def main() -> None:
     from argparse import ArgumentParser
 
     # fmt: off
     parser = ArgumentParser()
+    # TODO remove
     parser.add_argument("-n", "--dry-run", action="store_true", default=False)
-    parser.add_argument("--items", nargs="+", help="paths to find item xml data (Content/Items Content/Map)")
-    parser.add_argument("--texts", nargs="+", help="paths to find localization xml data (Content/Texts)")
-    parser.add_argument("--sprites", nargs="*", type=Path, help="search path for sprites (Content)")
-    parser.add_argument("write_sprites", nargs="?", type=Path, help="path to write sprite sheet .css")
+    # parser.add_argument("--package", nargs="*", action="append")
+    parser.add_argument("--content", nargs="+", type=Path, help="path to barotrauma Content or workshop directory containing filelist.xml")
+    # TODO remove
+    parser.add_argument("--write-sprites", nargs="?", type=Path, help="path to write sprite sheet .css")
     # parser.add_argument("output", nargs='?', default='-', type=Path, help="path to write .json")
     # fmt: on
 
     args = parser.parse_args()
 
-    # load every xml file and build an index
-    # TODO use the <contentpackage> as a reference for what files to read and
-    # version stuff?
+    logtime("finding contentpackage")
+
+    packages: list[BaroContentPackage] = []
+
+    for path in args.content:
+        for xmlpath in path.rglob("*.xml"):
+
+            element = find_ContentPackage_element(xmlpath)
+            if element is None:
+                continue
+
+            for baro_package in log_warnings(
+                extract_BaroContentPackage(element, path=path), path=xmlpath
+            ):
+                packages.append(baro_package)
+
+    logtime(f"packages: {', '.join(map(str, packages))}")
+
+    # only the vanilla package is supported right now
+    for baro_package in packages:
+        if baro_package.name == "Vanilla":
+            break
+
+    else:
+        log_warning("failed to find `Vanilla` package")
+        raise SystemExit(1)
+
+    package = load_package(baro_package)
+
+    if not args.dry_run:
+
+        if args.write_sprites is not None:
+            logtime(f"writing sprites to {args.write_sprites}")
+            args.write_sprites.open("w").write(package.sprites_css.getvalue())
+
+        logtime(f"dumping json to {stdout_name()}")
+        dumpme = {
+            "name": package.name,
+            "version": package.version,
+            "tags_by_identifier": package.tags_by_identifier,
+            "processes": package.processes,
+            "i18n": package.i18n,
+        }
+        try:
+            json.dump(dumpme, default=serialize_dataclass, fp=sys.stdout)
+        except BrokenPipeError:
+            pass
+
+
+def load_package(bcp: BaroContentPackage):
 
     logtime("building index")
 
     index: dict[Identifier, BaroItem] = {}
 
-    for path, doc in load_xml_rglob(args.items, "*.xml"):
+    for path, doc in load_xmls(bcp.items):
         for item in log_warnings(index_document(doc), path=path):
             index[item.identifier] = item
 
@@ -1165,45 +1332,33 @@ def main():
 
     index = retain_only_process_items(index, processes)
 
-    logtime(f"retained {len(index)} items")
+    logtime(f"retained {len(index)} items; finding sprites")
 
-    if args.write_sprites and args.sprites:
+    sprites: dict[Identifier, Sprite] = {}
 
-        logtime("finding sprites")
+    for item in index.values():
+        for sprite in log_warnings(extract_Sprite_under(item.element)):
+            sprites[item.identifier] = sprite
+            break
 
-        sprites: dict[Identifier, Sprite] = {}
+    logtime(f"generating css for {len(sprites)} sprites")
 
-        for item in index.values():
-            for sprite in log_warnings(extract_Sprite_under(item.element)):
-                sprites[item.identifier] = sprite
-                break
+    sprites_css = StringIO()
 
-        write_sprites = os.devnull if args.dry_run else args.write_sprites
+    for identifier, sprite in sprites.items():
 
-        logtime(f"generating sprite css: {write_sprites}")
+        texture_path = find_texture_path_on_fs(bcp.path, sprite.texture)
+        if texture_path is None:
+            log_warning("texture not found", path=sprite.texture, identifier=identifier)
+            continue
 
-        with open(write_sprites, "w") as file:
+        image = load_sprite_from_file(texture_path, sprite.ltwh)
 
-            for identifier, sprite in sprites.items():
-
-                for sprite_path in args.sprites:
-                    texture_path = find_texture_path_on_fs(sprite_path, sprite.texture)
-                    if texture_path is not None:
-                        break
-
-                else:
-                    log_warning(
-                        "texture not found", path=sprite.texture, identifier=identifier
-                    )
-                    continue
-
-                image = load_sprite_from_file(texture_path, sprite.ltwh)
-
-                print(
-                    '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
-                    % (identifier, to_base64(image)),
-                    file=file,
-                )
+        print(
+            '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
+            % (identifier, to_base64(image)),
+            file=sprites_css,
+        )
 
     logtime("i18n")
 
@@ -1223,8 +1378,7 @@ def main():
             else:
                 should_localize.add(part.what)
 
-    for path, doc in load_xml_rglob(args.texts, "*/*.xml"):
-
+    for path, doc in load_xmls(bcp.texts):
         root = doc.getroot()
         language = root.get("language")
         if not language:
@@ -1278,21 +1432,17 @@ def main():
     for lang, dictionary in i18n.items():
         logtime(f"{len(dictionary)} in {lang}")
 
-    if not args.dry_run:
-        logtime("dumping json")
-        dumpme = {
-            "tags_by_identifier": {
-                identifier: item.tags for identifier, item in index.items() if item.tags
-            },
-            "processes": processes,
-            "i18n": i18n,
-        }
-        try:
-            json.dump(dumpme, default=serialize_dataclass, fp=sys.stdout)
-        except BrokenPipeError:
-            pass
-
-    logtime("woo hoo!")
+    return Package(
+        name=bcp.name,
+        tags_by_identifier={
+            identifier: item.tags for identifier, item in index.items() if item.tags
+        },
+        processes=processes,
+        i18n=i18n,
+        sprites_css=sprites_css,
+        version=bcp.gameversion if bcp.mod is None else bcp.mod.modversion,
+        steamworkshopid=None if bcp.mod is None else bcp.mod.steamworkshopid,
+    )
 
 
 if __name__ == "__main__":
