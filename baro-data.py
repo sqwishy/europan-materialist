@@ -4,10 +4,11 @@ import re
 import sys
 from base64 import b64encode
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import copy
 from dataclasses import dataclass, is_dataclass, fields, asdict
-from io import BytesIO, StringIO
 from graphlib import TopologicalSorter
+from io import BytesIO, StringIO
 from itertools import count, chain
 from lxml import etree
 from operator import ior
@@ -18,6 +19,7 @@ from typing import (
     NewType,
     TypeAlias,
     Callable,
+    Iterable,
     Iterator,
     overload,
     TypeVar,
@@ -28,6 +30,9 @@ from time import monotonic_ns
 
 if TYPE_CHECKING:
     import PIL
+
+
+_CHECK_SPRITE_DUPE = False
 
 
 PACKAGE_ORIGIN_KEY = "__package-origin"
@@ -1206,20 +1211,12 @@ def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     return (l, t, l + w, t + h)
 
 
-def _meme(identifier: Identifier, path: Path, ltwh: tuple[int, int, int, int]):
-    image = load_sprite_from_file(path, ltwh)
-    return '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }' % (
-        identifier,
-        to_base64(image),
-    )
-
-
 __SPRITE_CACHE_LOCK = Lock()
 __SPRITE_CACHE: dict[Path, "PIL.Image.Image"] = {}
 __SPRITE_CACHE_IMAGE_LOCKS: dict[Path, Lock] = {}
 
 
-def load_sprite_from_file(
+def load_sprite_at_path(
     path: Path, ltwh: tuple[int, int, int, int]
 ) -> "PIL.Image.Image":
     from PIL import Image
@@ -1297,7 +1294,7 @@ def main() -> None:
     logtime("reading item identifiers...")
 
     preitems: dict[str, dict[Identifier, PreItem]] = {}
-    alltexts: list[InfoTexts] = []
+    alltexts: dict[str, list[InfoTexts]] = {}
 
     for package in packages:
         items, texts = _resolve_content_package_paths(vanilla, package)
@@ -1305,13 +1302,10 @@ def main() -> None:
         _index = preitems[package.name] = {}
         for preitem in _iter_content_package_preitems(package, items):
             _index[preitem.identifier] = preitem
-
         logtime(f"{package.name} » {len(_index)} items")
 
-        # uhg
-        _texts = list(_iter_content_package_infotexts(package, texts))
-        alltexts.extend(_texts)
-
+        _texts = alltexts[package.name] = []
+        _texts.extend(_iter_content_package_infotexts(package, texts))
         logtime(f"{package.name} » {len(_texts)} texts")
 
     # build bundles for output
@@ -1329,6 +1323,8 @@ def main() -> None:
     # write bundles under output
 
     args.output.mkdir(parents=True, exist_ok=True)
+
+    index = []
 
     for bundle in bundles:
         logtime(f"writing {bundle.names()}")
@@ -1348,6 +1344,18 @@ def main() -> None:
         }
         json.dump(dumpme, default=serialize_dataclass, fp=bundle_path.open("w"))
         logtime(f"wrote {bundle_path}")
+
+        index.append(
+            {
+                "load_order": bundle.load_order,
+                "bundle": bundle_path.name,
+                "sprites": css_path.name,
+            }
+        )
+
+    index_path = args.output / "index.json"
+    json.dump(index, default=serialize_dataclass, fp=index_path.open("w"))
+    logtime(f"wrote {index_path}")
 
 
 def _rglob_for_ContentPackages(paths: list[Path]) -> Iterator[ContentPackage | Warning]:
@@ -1590,7 +1598,7 @@ class Bundle(object):
 def build_bundle(
     load_order: list[ContentPackage],
     preitems_by_package: dict[str, dict[Identifier, PreItem]],
-    texts: list[InfoTexts],
+    texts_by_package: dict[str, list[InfoTexts]],
 ) -> Bundle:
 
     logtime("applying variants")
@@ -1601,7 +1609,7 @@ def build_bundle(
     preitem_layers = (preitems_by_package[package.name] for package in load_order)
 
     preitem_by_identifier: dict[Identifier, PreItem]
-    preitem_by_identifier = reduce(ior, preitem_layers, {})  # ior is |=
+    preitem_by_identifier = reduce(ior, preitem_layers, {})  # ior is |=,
 
     index: dict[Identifier, BaroItem] = {}
     for identifier, element in log_warnings(apply_variants(preitem_by_identifier)):
@@ -1629,62 +1637,9 @@ def build_bundle(
 
     logtime(f"retained {len(index)} items; generating sprites")
 
-    sprites_css = StringIO()
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    # dupes = {}
-
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futs = []
-
-        for item in index.values():
-            for sprite in log_warnings(extract_Sprite_under(item.element)):
-                break
-            else:
-                log_warning("no sprite found", item=item)
-                continue
-
-            package = package_by_name[sprite.package_name]
-            xmlpath = preitem_by_identifier[item.identifier].xmlpath
-
-            try:
-                texture_path = resolve_path_with_relative_fallback(
-                    sprite.texture,
-                    vanilla=vanilla,
-                    current=package,
-                    fallback=xmlpath.parent,
-                )
-            except FileNotFoundError as error:
-                log_warning(
-                    "texture not found",
-                    error=error,
-                    element=sprite.element,
-                    path=xmlpath,
-                )
-
-            # if (texture_path, sprite.ltwh) in dupes:
-            #     log_warning(
-            #         "dupe",
-            #         item=(texture_path, sprite.ltwh, item),
-            #         dupe=dupes[(texture_path, sprite.ltwh)],
-            #     )
-            # else:
-            #     dupes[(texture_path, sprite.ltwh)] = (texture_path, sprite.ltwh, item)
-
-            futs.append(ex.submit(_meme, item.identifier, texture_path, sprite.ltwh))
-
-        for fut in as_completed(futs):
-            # exception handling?
-            print(fut.result(), file=sprites_css)
-
-            # image = load_sprite_from_file(texture_path, sprite.ltwh)
-
-            # print(
-            #     '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
-            #     % (item.identifier, to_base64(image)),
-            #     file=sprites_css,
-            # )
+    sprites_css = _sprite_sheet_css(
+        index.values(), vanilla, package_by_name, preitem_by_identifier
+    )
 
     logtime(f"sprite sheet {len(sprites_css.getvalue().encode())} bytes")
 
@@ -1692,7 +1647,9 @@ def build_bundle(
     should_localize.update(("$", "fabricatorrequiresrecipe", "random"))
 
     # {language: {identifier: humantext}}
-    i18n: dict[str, dict[str, str]] = _bundle_i18n(load_order, texts, should_localize)
+    i18n: dict[str, dict[str, str]] = _bundle_i18n(
+        load_order, texts_by_package, should_localize
+    )
 
     # TODO warn about duplicates?
     # if (current := dictionary.get(msg)) is not None and current != child.text:
@@ -1733,6 +1690,86 @@ def build_bundle(
     )
 
 
+def _sprite_sheet_css(
+    items: Iterable[BaroItem],
+    vanilla: ContentPackage,
+    package_by_name: dict[str, ContentPackage],
+    preitem_by_identifier: dict[Identifier, PreItem],
+) -> StringIO:
+
+    sprites_css = StringIO()
+
+    if _CHECK_SPRITE_DUPE:
+        dupes = {}
+
+    # as of python 3.8, the default max workers maxes out at 32 or something so
+    # it doesn't act stupid on many-core machines
+    with ThreadPoolExecutor() as ex:
+        pending = {}
+
+        for item in items:
+            for sprite in log_warnings(extract_Sprite_under(item.element)):
+                break
+            else:
+                log_warning("no sprite found", item=item)
+                continue
+
+            package = package_by_name[sprite.package_name]
+            xmlpath = preitem_by_identifier[item.identifier].xmlpath
+
+            try:
+                texture_path = resolve_path_with_relative_fallback(
+                    sprite.texture,
+                    vanilla=vanilla,
+                    current=package,
+                    fallback=xmlpath.parent,
+                )
+            except FileNotFoundError as error:
+                log_warning(
+                    "texture not found",
+                    error=error,
+                    element=sprite.element,
+                    path=xmlpath,
+                )
+
+            if _CHECK_SPRITE_DUPE:
+                if (texture_path, sprite.ltwh) in dupes:
+                    log_warning(
+                        "dupe",
+                        item=(texture_path, sprite.ltwh, item),
+                        dupe=dupes[(texture_path, sprite.ltwh)],
+                    )
+                else:
+                    dupes[(texture_path, sprite.ltwh)] = (
+                        texture_path,
+                        sprite.ltwh,
+                        item,
+                    )
+
+            future = ex.submit(_load_base64_sprite_at_path, texture_path, sprite.ltwh)
+            pending[future] = item.identifier
+
+        for done in as_completed(pending):
+            identifier = pending.pop(done)
+            try:
+                b64 = done.result()
+            except Exception as error:
+                log_warning("_load_sprite_at_path_as_base64", error=error)
+            else:
+                print(
+                    '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
+                    % (identifier, b64),
+                    file=sprites_css,
+                )
+
+    return sprites_css
+
+
+def _load_base64_sprite_at_path(path: Path, ltwh: tuple[int, int, int, int]):
+    image = load_sprite_at_path(path, ltwh)
+    return to_base64(image)
+
+
 def _should_localize_from_processes(
     processes: list[Process],
     index: dict[Identifier, BaroItem],
@@ -1756,18 +1793,17 @@ def _should_localize_from_processes(
 
 def _bundle_i18n(
     load_order: list[ContentPackage],
-    texts: list[InfoTexts],
+    texts_by_package: dict[str, list[InfoTexts]],
     should_localize: set[str],
 ) -> dict[str, dict[str, str]]:
     i18n: dict[str, dict[str, str]] = {}
 
     for package in reversed(load_order):
-        for text in texts:
-            if text.package == package:
-                our_dictionary = i18n.setdefault(text.language, {})
-                for msg in should_localize:
-                    if msg not in our_dictionary and msg in text.dictionary:
-                        our_dictionary[msg] = text.dictionary[msg]
+        for text in texts_by_package.get(package.name, ()):
+            our_dictionary = i18n.setdefault(text.language, {})
+            for msg in should_localize:
+                if msg not in our_dictionary and msg in text.dictionary:
+                    our_dictionary[msg] = text.dictionary[msg]
 
     return i18n
 

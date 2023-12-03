@@ -29,7 +29,7 @@ export type Package = {
 }
 
 export type Stuff = {
-  load_order: Package[]
+  load_order: Package[],
   tags_by_identifier: Record<Identifier, Identifier[]>,
   processes: Process[],
   i18n: Record<string, Record<string, string>>,
