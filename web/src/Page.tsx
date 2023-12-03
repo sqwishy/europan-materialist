@@ -5,7 +5,7 @@ import { Show, For, Index } from 'solid-js/web'
 import * as Data from "./Data"
 import * as Locale from "./Locale"
 import * as Filter from "./Filter"
-import stuffUrl from '../assets/stuff.json?url'
+import stuffUrl from '../assets/packages/Vanilla.json?url'
 
 
 const WIKI_BASE_URL = `https://barotraumagame.com/wiki/`;
@@ -103,7 +103,13 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
                   <span class="identifier">{ self.build.hash }</span>
                 </Show>
                 \ — generated on { DATETIME_FMT.format(self.build.date) }
-                \ — { stuff.name } { stuff.version }
+              </small>
+            </p>
+            <p>
+              <small>
+                <Index each={stuff.load_order}>
+                  {(item) => <>{ item().name } { item().version }</>}
+                </Index>
               </small>
             </p>
             <p>
@@ -370,11 +376,11 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
 
 
 function Process({ process } : { process: Data.Process }) {
-  const { id, skills, time, stations, uses, needs_recipe } = process;
+  const { skills, time, stations, uses, needs_recipe } = process;
   const [localize] = useContext(Locale.Context);
 
   return (
-    <div class="process" id={id}>
+    <div class="process">
       {/* parts consumed */}
       <UsesList uses={uses.filter(({ amount }) => amount < 0)} />
 

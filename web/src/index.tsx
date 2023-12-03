@@ -2,7 +2,7 @@ import { createSignal, createEffect } from 'solid-js';
 import { render, ErrorBoundary } from 'solid-js/web';
 import { Router } from '@solidjs/router'
 import { Page } from './Page';
-import spritesCssUrl from '../assets/sprites.css?url'
+import spritesCssUrl from '../assets/packages/Vanilla.css?url'
 
 /* vite does crazy shit to index.html. it will combine css files listed in <link>
  * elements based on their file extensions.

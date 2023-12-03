@@ -13,7 +13,7 @@ export type WeightedRandomWithReplacement = {
 }
 
 export type Process = {
-  id: string,
+  // id: string,
   uses: (Part | WeightedRandomWithReplacement)[],
   skills: Record<Identifier, number>,
   stations: Identifier[],
@@ -22,9 +22,14 @@ export type Process = {
   description?: string
 }
 
-export type Stuff = {
+export type Package = {
   name: string,
-  version: string,
+  version?: string,
+  steamworkshopid?: string,
+}
+
+export type Stuff = {
+  load_order: Package[]
   tags_by_identifier: Record<Identifier, Identifier[]>,
   processes: Process[],
   i18n: Record<string, Record<string, string>>,

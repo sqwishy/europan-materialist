@@ -5,14 +5,14 @@ import sys
 from base64 import b64encode
 from collections import defaultdict
 from copy import copy
-from dataclasses import dataclass, is_dataclass, fields, field
+from dataclasses import dataclass, is_dataclass, fields, asdict
 from io import BytesIO, StringIO
 from graphlib import TopologicalSorter
 from itertools import count, chain
 from lxml import etree
-from operator import itemgetter
+from operator import ior
 from pathlib import Path
-from functools import partial
+from functools import partial, reduce
 from typing import (
     Union,
     NewType,
@@ -24,11 +24,13 @@ from typing import (
     Literal,
     TYPE_CHECKING,
 )
-from types import MappingProxyType
 from time import monotonic_ns
 
 if TYPE_CHECKING:
     import PIL
+
+
+PACKAGE_ORIGIN_KEY = "__package-origin"
 
 
 class ansi:
@@ -36,10 +38,13 @@ class ansi:
 
     class Color(object):
 
-        reset = "\x1b[0m"
+        # this stupid fucking text editor's indentation breaks from the
+        # unmatched left bracket in strings ...
+
+        reset = "\x1b[0m"  # ]
 
         def __init__(self, n):
-            self.fg = f"\x1b[38;5;{n}m"
+            self.fg = f"\x1b[38;5;{n}m"  # ]
 
         if sys.stderr.isatty() and "NOCOLOR" not in os.environ:
 
@@ -56,14 +61,6 @@ class ansi:
 
 
 _LAST_TIME = None
-
-
-def skip_comments(el: etree._Element) -> Iterator[etree._Element]:
-    return (child for child in el if child.tag is not etree.Comment)
-
-
-def flat_map(fn, iterable):
-    return chain.from_iterable(map(fn, iterable))
 
 
 def logtime(message):
@@ -105,6 +102,10 @@ class Warning(object):
         self.message = message
         self.kwargs = kwargs
 
+    def with_path(self, path):
+        self.kwargs["path"] = path
+        return self
+
 
 def warn_missing_attribute(*, element: etree._Element, attribute):
     return Warning(
@@ -125,17 +126,19 @@ def warn_bad_value(*, error, attribute, element):
 def log_warnings(it, *, path=None):
     for item in it:
         if isinstance(item, Warning):
+            if path:
+                item = item.with_path(path)
             log_warning(item.message, **item.kwargs)
         else:
             yield item
 
 
-def log_warning(message, path=None, **kwargs):
+def log_warning(message, **kwargs):
     print(ansi.magenta(message), file=sys.stderr)
 
     for key, value in kwargs.items():
         prefix = f"\t» {ansi.blue(key)} "
-        value = format_log_value(value, path)
+        value = format_log_value(value, path=kwargs.get("path"))
 
         if "\n" in value:
             print(f"{prefix}...\n{value}", file=sys.stderr)
@@ -170,7 +173,7 @@ def format_log_value(v, path=None):
         return repr(v)
 
     else:
-        return v
+        return str(v)
 
 
 def _dedent_strings(strings):
@@ -303,13 +306,9 @@ class Process(object):
 
 
 @dataclass
-class Tagged(object):
-    identifier: Identifier
-    tags: list[Identifier]
-
-
-@dataclass
 class Sprite(object):
+    element: etree._Element
+    package_name: str
     texture: str
     ltwh: tuple[int, int, int, int]
 
@@ -319,57 +318,20 @@ class BaroItem(object):
     element: etree._Element
     identifier: Identifier
     nameidentifier: str | None
-    variant_of: Identifier | None
     tags: list[Identifier]
-
-    @property
-    def is_variant(self) -> bool:
-        return self.variant_of is not None
-
-
-def index_document(doc) -> Iterator[BaroItem | Warning]:
-    root = doc.getroot()
-    element_tag = root.tag.lower()
-
-    if element_tag == "item":
-        items = [root]
-
-    elif element_tag == "items":
-        items = root
-
-    else:
-        return
-
-    for item in items:
-
-        # skip items with no identifier, we assume they contain no interesting
-        # information
-        if not item.get("identifier"):
-            if item.xpath("Fabricate or Deconstruct or Price"):
-                yield Warning(
-                    "element has no identifier but has something we care about",
-                    element=item,
-                )
-            continue
-
-        yield from extract_BaroItem(item)
 
 
 def extract_BaroItem(element) -> Iterator[BaroItem | Warning]:
-    # there are a lot of attributes on these elements,
-    # we don't care to explicitly ignore them so don't
-    # yield from attrs.warnings()
-
+    # there are a lot of attributes on this, we don't care to explicitly ignore
+    # them so don't yield from attrs.warnings() since that warns us about
+    # unused attributes
     attrs = Attribs.from_element(element)
-
     try:
         yield BaroItem(
             element=element,
             identifier=attrs.use("identifier", convert=make_identifier),
             nameidentifier=attrs.or_none("nameidentifier"),
             tags=attrs.use("tags", convert=split_identifier_list, default=[]),
-            variant_of=attrs.or_none("variantof", convert=make_identifier)
-            or attrs.or_none("inherit", convert=make_identifier),
         )
     except Error as err:
         yield err.as_warning()
@@ -397,7 +359,12 @@ def extract_Sprite(el) -> Iterator[Sprite | Warning]:
                 or attrs.use("source", convert=split_ltwh)
         # fmt: on
 
-        yield Sprite(texture=attrs.use("texture"), ltwh=ltwh)
+        yield Sprite(
+            element=el,
+            texture=attrs.use("texture"),
+            ltwh=ltwh,
+            package_name=attrs.use(PACKAGE_ORIGIN_KEY),
+        )
     except Error as err:
         yield err.as_warning()
 
@@ -621,6 +588,9 @@ def extract_Deconstruct_Item(el) -> Iterator[Part | Warning]:
     attrs.ignore(
         "commonness",
         "copycondition",
+        # useful but confusing to display vs the condition the input is
+        # required to be at for this part to be produced Items/ItemPrefab.cs:62
+        "outcondition",
         "outconditionmin",
         "outconditionmax",
         "activatebuttontext",
@@ -726,7 +696,11 @@ def extract_Price(el, **kwargs) -> Iterator[Process | Warning]:
     # price = attrs.use("baseprice", convert=float, default=0.0)
     # multiplier = attrs.use("multiplier", convert=float, default=1.0)
 
-    is_sold_by_stores_generally = attrs.use("sold", convert=xmlbool, default=True)
+    is_sold_by_stores_generally = attrs.use("sold", convert=xmlbool, default=None)
+    if is_sold_by_stores_generally is None:
+        is_sold_by_stores_generally = attrs.use(
+            "soldbydefault", convert=xmlbool, default=True
+        )
 
     yield from attrs.warnings()
 
@@ -756,7 +730,14 @@ def extract_Price(el, **kwargs) -> Iterator[Process | Warning]:
         )
 
         try:
-            stations = attrs.use("storeidentifier", convert=split_identifier_list)
+            locationtype = attrs.opt("locationtype", convert=make_identifier)
+            if locationtype:
+                stations_fallback = dict(default=[f"merchant{locationtype}"])
+            else:
+                stations_fallback = dict()
+            stations = attrs.use(
+                "storeidentifier", convert=split_identifier_list, **stations_fallback
+            )
 
             if attrs.use("sold", convert=xmlbool, default=is_sold_by_stores_generally):
                 price.stations.extend(stations)
@@ -770,50 +751,144 @@ def extract_Price(el, **kwargs) -> Iterator[Process | Warning]:
         yield price
 
 
-def load_and_apply_index_variants(index_: dict[Identifier, BaroItem]):
-    index = {}
+@dataclass
+class ContentPackageHeader(object):
+    name: str
+    corepackage: bool
+    gameversion: str
+    modversion: str
+    steamworkshopid: str
 
-    # copy index keeping only variations where we know about the variant_of?
-    for key, item in index_.items():
-        if item.is_variant and item.variant_of not in index_:
-            log_warning(
-                ansi.magenta("item variant_of not in index"),
-                element=item.element,
-                variant_of=item.variant_of,
-            )
-        else:
-            index[key] = item
 
-    graph = {
-        identifier: {item.variant_of}
-        for identifier, item in index.items()
-        if item.variant_of is not None
-    }
-    for identifier in TopologicalSorter(graph).static_order():
-        # I don't think `identifier` or `index[item.variant_of]` are ever None
-        # mypy is too fucking stupid to know that so here we are ...
-        if (
-            identifier is None
-            or (item := index[identifier]) is None
-            or item.variant_of is None
-            or (variant_of := index[item.variant_of]) is None
-        ):
+@dataclass
+class ContentPackage(object):
+    path: Path
+    xmlpath: Path
+    element: etree._Element
+    name: str
+    corepackage: bool
+    gameversion: str
+    modversion: str
+    steamworkshopid: str
+
+
+@dataclass
+class PreItem(object):
+    """variant_of not applied"""
+
+    package: ContentPackage
+    xmlpath: Path
+    element: etree._Element
+    identifier: Identifier
+    variant_of: Identifier | None
+
+
+def find_ContentPackage_element(xmlpath: Path, peek=512) -> etree._Element | None:
+    with xmlpath.open("rb") as file:
+        if peek:
+            if b"<contentpackage" not in file.read(peek).lower():
+                return None
+
+            file.seek(0)
+
+        for _, element in etree.iterparse(file, events=("start",)):
+
+            if element.tag.lower() == "contentpackage":
+                return element
+
+            else:
+                break  # only check the root element
+
+        return None
+
+
+def extract_ContentPackageHeader(element) -> Iterator[ContentPackageHeader | Warning]:
+    attrs = Attribs.from_element(element)
+    attrs.ignore("altnames", "expectedhash")
+
+    yield ContentPackageHeader(
+        name=attrs.use("name"),
+        corepackage=attrs.use("corepackage", convert=xmlbool, default=False),
+        gameversion=attrs.use("gameversion"),
+        modversion=attrs.use("modversion", default=None),
+        steamworkshopid=attrs.use("steamworkshopid", default=None),
+    )
+
+    yield from attrs.warnings()
+
+
+@dataclass
+class ContentPath(object):
+    kind: Literal["item"] | Literal["text"]
+    path: Path
+
+
+def extract_ContentPath(element, convert_path) -> Iterator[ContentPath | Warning]:
+    for child in element:
+        tag = child.tag.lower()
+
+        if tag not in ("item", "text"):
             continue
 
-        full_element = apply_variant(
-            variant_of.element,
-            item.element,
+        a = Attribs.from_element(child)
+
+        try:
+            path = a.use("file", convert=convert_path)
+
+        except Error as err:
+            yield err.as_warning()
+
+        else:
+            yield ContentPath(kind=tag, path=path)
+
+        yield from a.warnings()
+
+
+def apply_variants(
+    preitems: dict[Identifier, PreItem]
+) -> Iterator[tuple[Identifier, etree._Element] | Warning]:
+    graph: dict[Identifier, set[Identifier]] = {}
+
+    for identifier, preitem in preitems.items():
+
+        if preitem.variant_of is None:
+            yield identifier, preitem.element
+
+        elif preitem.variant_of not in preitems:
+            yield Warning(
+                "element's variant_of not not found",
+                element=preitem.element,
+                variant_of=preitem.variant_of,
+                path=preitem.xmlpath,
+            )
+
+        else:
+            graph[identifier] = {preitem.variant_of}
+
+    # topological sort so that identifiers for variants of an item are iterated
+    # _after_ the identifiers of the item they are a variant of ...
+    #
+    # so B =variant_of=> A yields A before B
+    applied: dict[Identifier, etree._Element] = {}
+
+    for identifier in TopologicalSorter(graph).static_order():
+
+        # anything that isn't a variant was already yielded in the earlier loop
+        if (variation := preitems[identifier]).variant_of is None:
+            continue
+
+        # fmt: off
+        base_element = applied.get(variation.variant_of) \
+                    or preitems[variation.variant_of].element
+        # fmt: on
+
+        applied_element = applied[identifier] = apply_variant(
+            base_element,
+            variation.element,
             only_tags=("fabricate", "deconstruct", "price", "inventoryicon", "sprite"),
         )
 
-        # this is basically to inherit tags from the variant_of element
-        # if this fails for some reason, should the item be removed from index?
-
-        for item in log_warnings(extract_BaroItem(full_element)):
-            index[identifier] = item
-            break
-
-    return index
+        yield identifier, applied_element
 
 
 def apply_variant(
@@ -840,7 +915,7 @@ def apply_variant(
 
     - encounering the <Clear/> element in the variant removes all children
 
-    see BarotraumaShared/SharedSource/Prefabs/IImplementsVariants.cs
+    see BarotraumaShared/SharedSource/PreItems/IImplementsVariants.cs
     """
     applied = etree.Element(variant.tag)
     applied.sourceline = variant.sourceline  # kind of a lie ?
@@ -874,7 +949,7 @@ def apply_variant(
                 # if the variant element has no attributes or children, this
                 # omits the element in the output instead of merging the
                 # element pair
-                if variant_child.attrib or len(variant_child):
+                if element_is_non_empty(variant_child):
                     applied.append(apply_variant(base_child, variant_child))
 
                 break
@@ -998,10 +1073,6 @@ class Attribs(dict):
 
     or_none = opt
 
-    def raise_if_not_empty(self):
-        if self:
-            raise UnexpectedElement(self)
-
     def warnings(self) -> Iterator[Warning]:
         if self:
             yield Warning(
@@ -1031,37 +1102,103 @@ def sign(i: int):
     return 1 if i >= 0 else -1
 
 
-_path_cache: dict[str, dict[str, Path]] = {}
+def partition(it, fn):
+    l, r = [], []
+    for i in it:
+        (l if fn(i) else r).append(i)
+    return l, r
 
 
-def find_texture_path_on_fs(content: Path, texture: str) -> Path | None:
-    """content should be a path to barotrauma's Content directory"""
-    # - this pretty much has to behave case-insensitive ...
-    # - texture paths may be relative to the directory containing barotrauma's
-    #   Content directory, so drop that prefix if we find it
+def skip_comments(el: etree._Element) -> Iterator[etree._Element]:
+    return (child for child in el if child.tag is not etree.Comment)
 
-    # TODO do something about preventing symlinks or paths leaving the
-    # args.content root via .. or whatever
 
-    # fmt: off
-    suffix = Path(texture).suffix
-    texture = texture.lower()
-    texture = drop_prefix(texture, "content/") \
-           or drop_prefix(texture, "content\\") \
-           or texture
-    # fmt: on
+def element_is_non_empty(el: etree._Element) -> bool:
+    return bool(el.attrib or len(el))
 
-    haystack = _path_cache.get(suffix)
-    if haystack is None:
-        haystack = _path_cache[suffix] = {
-            str(p).lower(): p for p in content.rglob(f"*{suffix}")
+
+from threading import Lock
+
+
+def resolve_path_with_relative_fallback(
+    path: str,
+    *,
+    vanilla: ContentPackage,
+    current: ContentPackage,
+    fallback: Path,
+) -> Path:
+    _resolve = partial(resolve_path, vanilla=vanilla, current=current)
+    try:
+        return _resolve(path)
+    except FileNotFoundError:
+        # if this raises a value error because the given paths aren't relative
+        # to each other then that's probably a good thing
+        qualified = fallback.relative_to(current.path)
+        return _resolve(qualified / path)
+
+
+# {(package path, suffix): {lowercase path: filesystem path}}
+__PATH_CACHE: dict[tuple[Path, str], dict[str, Path]] = {}
+
+
+def resolve_path(
+    path: str,
+    *,
+    vanilla: ContentPackage,
+    current: ContentPackage,
+) -> Path:
+    """
+    given a path to a resouce in a content package, find the corresponding file
+    on the filesystem
+
+    raises FileNotFoundError otherwise
+
+    should be case insensitive, should not resolve outside of `root`, should
+    return a path that is a file that exists
+
+    also, this sort of expects you to pass it Barotrauma's Content directory
+    for the Vanilla package, but Vanilla resource paths are prefixed with
+    "content/" so those prefixes are dropped in that case
+    """
+    suffix = Path(path).suffix
+
+    # FIXME not cross platform ...
+    path = str(path).replace("\\", "/")
+
+    if relative_path := is_mod_relative_path(path):
+        if vanilla == current:
+            raise Exception("%ModDir% used in Vanilla??")
+        package_path = current.path
+        content_path = relative_path.lower()
+
+    else:
+        package_path = vanilla.path
+        content_path = path.lower()
+        if package_path.parts[-1].lower() == "content":
+            if trimmed := drop_prefix(content_path, "content/"):
+                content_path = trimmed
+
+    paths = __PATH_CACHE.get((package_path, suffix))
+    if paths is None:
+        paths = __PATH_CACHE[(package_path, suffix)] = {
+            str(p.relative_to(package_path)).lower(): p
+            for p in package_path.rglob(f"*{suffix}")
         }
 
-    for nocasepath, fspath in haystack.items():
-        if nocasepath.endswith(texture):
-            return content / fspath
+    if content_path not in paths:
+        raise FileNotFoundError(package_path / content_path)
 
-    return None
+    realpath = paths[content_path]
+
+    assert realpath.resolve().is_relative_to(package_path)
+
+    return realpath
+
+
+def is_mod_relative_path(path: str) -> str | None:
+    if path.startswith("%ModDir:"):  # for specifying a mod by name
+        raise NotImplementedError(path)
+    return drop_prefix(path, "%ModDir%/")
 
 
 def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
@@ -1069,7 +1206,17 @@ def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     return (l, t, l + w, t + h)
 
 
-_sprite_cache: dict[Path, "PIL.Image.Image"] = {}
+def _meme(identifier: Identifier, path: Path, ltwh: tuple[int, int, int, int]):
+    image = load_sprite_from_file(path, ltwh)
+    return '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }' % (
+        identifier,
+        to_base64(image),
+    )
+
+
+__SPRITE_CACHE_LOCK = Lock()
+__SPRITE_CACHE: dict[Path, "PIL.Image.Image"] = {}
+__SPRITE_CACHE_IMAGE_LOCKS: dict[Path, Lock] = {}
 
 
 def load_sprite_from_file(
@@ -1077,13 +1224,22 @@ def load_sprite_from_file(
 ) -> "PIL.Image.Image":
     from PIL import Image
 
-    image = _sprite_cache.get(path)
-    if image is None:
-        image = _sprite_cache[path] = Image.open(path)
+    with __SPRITE_CACHE_LOCK:
+        image_lock = __SPRITE_CACHE_IMAGE_LOCKS.get(path)
+        if image_lock is None:
+            image_lock = __SPRITE_CACHE_IMAGE_LOCKS[path] = Lock()
+
+    with image_lock:
+        # A BIT FUCKY?
+        image = __SPRITE_CACHE.get(path)
+        if image is None:
+            image = __SPRITE_CACHE[path] = Image.open(path)
+        image = image.copy()
 
     image = image.crop(ltwh_to_ltbr(ltwh))  # crop to sprite in sheet
     image = image.crop(image.getbbox())  # crop transparency
-    image = image.copy()  # thumbnail() is in-place returns None, copy first
+    # copy done earlier because threading
+    # image = image.copy()  # thumbnail() is in-place returns None, copy first
     image.thumbnail((48, 48))
     return image
 
@@ -1108,322 +1264,447 @@ def load_xmls(paths: list[Path]) -> Iterator[tuple[Path, etree._Document]]:
             yield path, doc
 
 
-def stdout_name() -> str:
-    try:
-        return os.readlink(f"/proc/self/fd/1")
-    except OSError:
-        return "stdout"
-
-
-@dataclass
-class BaroContentPackageMod(object):
-    modversion: str
-    steamworkshopid: str
-
-
-@dataclass
-class BaroContentPackage(object):
-    # items and texts are unsanitized and unchecked, may start with %ModDir%
-    # https://regalis11.github.io/BaroModDoc/Intro/XML.html#barotrauma-specific-notes
-    items: list[Path]
-    texts: list[Path]
-    path: Path
-    name: str
-    gameversion: str
-    mod: BaroContentPackageMod | None = None
-
-    def __str__(self):
-        return self.name
-
-
-def find_ContentPackage_element(xmlpath: Path, peek=512) -> etree._Element | None:
-    with xmlpath.open("rb") as file:
-        if peek:
-            if b"<contentpackage" not in file.read(peek).lower():
-                return None
-
-            file.seek(0)
-
-        for event, element in etree.iterparse(file, events=("start",)):
-
-            if element.tag.lower() == "contentpackage":
-                return element
-
-            else:
-                break  # only check the root element
-
-        return None
-
-
-def extract_BaroContentPackage(
-    element, *, path: Path
-) -> Iterator[BaroContentPackage | Warning]:
-    attrs = Attribs.from_element(element)
-    attrs.ignore("altnames", "corepackage", "expectedhash")
-
-    modversion = attrs.use("modversion", default=None)
-    if modversion is None:
-        mod = None
-    else:
-        mod = BaroContentPackageMod(
-            modversion=modversion,
-            steamworkshopid=attrs.use("steamworkshopid", default=None),
-        )
-
-    package = BaroContentPackage(
-        items=[],
-        texts=[],
-        name=attrs.use("name"),
-        gameversion=attrs.use("gameversion"),
-        path=path,
-    )
-
-    yield from attrs.warnings()
-
-    resolve_path = partial(resolve_content_package_element_path, package_path=path)
-
-    for child in element:
-        tag = child.tag.lower()
-
-        if tag == "item":
-            dest = package.items
-        elif tag == "text":
-            dest = package.texts
-        else:
-            continue
-
-        a = Attribs.from_element(child)
-        try:
-            item_path = a.use("file", convert=resolve_path)
-        except Error as err:
-            yield err.as_warning()
-        else:
-            dest.append(item_path)
-        yield from a.warnings()
-
-    yield package
-
-
-# TODO should merge this with find_texture_path_on_fs
-def resolve_content_package_element_path(path_: str, package_path: Path) -> Path:
-    """sanitize a path provided by a <contentpackage> or raise ValueError
-
-    The file must exist on the filesytem and be a file and not a symlink and be
-    relative to / descendent under the package path.
-    """
-    if rel := drop_prefix(path_, "%ModDir%/"):
-        path = package_path / rel
-    elif rel := drop_prefix(path_, "Content/"):  # HACK HACK HACK
-        path = package_path / rel
-    else:
-        path = package_path / path_
-
-    if path.is_file() and not path.is_symlink() and path.is_relative_to(package_path):
-        return path
-
-    else:
-        raise ValueError("path is not an actual file under the given package path")
-
-
-@dataclass
-class Package(object):
-    name: str
-    version: str
-    steamworkshopid: str | None
-    tags_by_identifier: dict[Identifier, list[Identifier]]
-    processes: list[Process]
-    # {language: {identifier: humantext}}
-    i18n: dict[str, dict[str, str]]
-    sprites_css: StringIO
-
-
 def main() -> None:
     from argparse import ArgumentParser
 
     # fmt: off
     parser = ArgumentParser()
-    # TODO remove
-    parser.add_argument("-n", "--dry-run", action="store_true", default=False)
-    # parser.add_argument("--package", nargs="*", action="append")
+    parser.add_argument("--package", nargs="*", action="append")
     parser.add_argument("--content", nargs="+", type=Path, help="path to barotrauma Content or workshop directory containing filelist.xml")
-    # TODO remove
-    parser.add_argument("--write-sprites", nargs="?", type=Path, help="path to write sprite sheet .css")
-    # parser.add_argument("output", nargs='?', default='-', type=Path, help="path to write .json")
+    parser.add_argument("--output", nargs='?', type=Path, help="path to write package css and json files")
     # fmt: on
 
     args = parser.parse_args()
 
     logtime("finding contentpackage")
 
-    packages: list[BaroContentPackage] = []
+    # the ordering of --content is not important
+    # but the order of --package is
 
-    for path in args.content:
+    package_me: list[list[ContentPackage]]
+    packages: list[ContentPackage]
+
+    packages = list(log_warnings(_rglob_for_ContentPackages(args.content)))
+    logtime(f"packages: {', '.join(package.name for package in packages)}")
+
+    # sanity checks
+
+    vanilla = _find_core_package_or_exit(packages)
+    package_me = _validate_load_order_or_exit(vanilla, packages, args.package)
+
+    # parse item xml; read identifier and variantof
+
+    logtime("reading item identifiers...")
+
+    preitems: dict[str, dict[Identifier, PreItem]] = {}
+    alltexts: list[InfoTexts] = []
+
+    for package in packages:
+        items, texts = _resolve_content_package_paths(vanilla, package)
+
+        _index = preitems[package.name] = {}
+        for preitem in _iter_content_package_preitems(package, items):
+            _index[preitem.identifier] = preitem
+
+        logtime(f"{package.name} » {len(_index)} items")
+
+        # uhg
+        _texts = list(_iter_content_package_infotexts(package, texts))
+        alltexts.extend(_texts)
+
+        logtime(f"{package.name} » {len(_texts)} texts")
+
+    # build bundles for output
+
+    bundles: list[Bundle] = []
+
+    for load_order in package_me:
+        logtime(f"bundling {[p.name for p in load_order]}")
+        bundles.append(build_bundle(load_order, preitems, alltexts))
+
+    if not args.output:
+        log_warning("no --output path specified, not writing anything!")
+        return
+
+    # write bundles under output
+
+    args.output.mkdir(parents=True, exist_ok=True)
+
+    for bundle in bundles:
+        logtime(f"writing {bundle.names()}")
+
+        path_nosuffix = args.output / bundle.mangled_filename()
+        bundle_path = path_nosuffix.with_suffix(".json")
+        css_path = path_nosuffix.with_suffix(".css")
+
+        css_path.open("w").write(bundle.sprites_css.getvalue())
+        logtime(f"wrote {css_path}")
+
+        dumpme = {
+            "load_order": bundle.load_order,
+            "tags_by_identifier": bundle.tags_by_identifier,
+            "processes": bundle.processes,
+            "i18n": bundle.i18n,
+        }
+        json.dump(dumpme, default=serialize_dataclass, fp=bundle_path.open("w"))
+        logtime(f"wrote {bundle_path}")
+
+
+def _rglob_for_ContentPackages(paths: list[Path]) -> Iterator[ContentPackage | Warning]:
+    for path in paths:
         for xmlpath in path.rglob("*.xml"):
-
             element = find_ContentPackage_element(xmlpath)
-            if element is None:
-                continue
+            if element is not None:
+                for item in extract_ContentPackageHeader(element):
+                    if isinstance(item, Warning):
+                        yield item.with_path(xmlpath)
+                    else:
+                        yield ContentPackage(
+                            path=path, xmlpath=xmlpath, element=element, **asdict(item)
+                        )
 
-            for baro_package in log_warnings(
-                extract_BaroContentPackage(element, path=path), path=xmlpath
-            ):
-                packages.append(baro_package)
 
-    logtime(f"packages: {', '.join(map(str, packages))}")
+def _find_core_package_or_exit(packages: list[ContentPackage]) -> ContentPackage:
+    is_core, non_core = partition(packages, lambda p: p.corepackage)
 
-    # only the vanilla package is supported right now
-    for baro_package in packages:
-        if baro_package.name == "Vanilla":
-            break
-
-    else:
-        log_warning("failed to find `Vanilla` package")
+    if len(is_core) != 1:
+        log_warning(
+            "expected exactly one contentpackage to be marked a corepackage",
+            iscorepackage=set(p.name for p in is_core),
+            notcorepackage=set(p.name for p in non_core),
+        )
         raise SystemExit(1)
 
-    package = load_package(baro_package)
+    return is_core[0]
 
-    if not args.dry_run:
 
-        if args.write_sprites is not None:
-            logtime(f"writing sprites to {args.write_sprites}")
-            args.write_sprites.open("w").write(package.sprites_css.getvalue())
+def _validate_load_order_or_exit(
+    vanilla: ContentPackage,
+    packages: list[ContentPackage],
+    name_load_order_list: list[list[str]] | None,
+) -> list[list[ContentPackage]]:
+    if not name_load_order_list:
+        return [[vanilla]]
 
-        logtime(f"dumping json to {stdout_name()}")
-        dumpme = {
-            "name": package.name,
-            "version": package.version,
-            "tags_by_identifier": package.tags_by_identifier,
-            "processes": package.processes,
-            "i18n": package.i18n,
-        }
-        try:
-            json.dump(dumpme, default=serialize_dataclass, fp=sys.stdout)
-        except BrokenPipeError:
+    package_load_order_list = []
+    package_by_name = {package.name: package for package in packages}
+    package_names = (package.name for package in packages)
+
+    if missing := set(chain.from_iterable(name_load_order_list)) - set(package_names):
+        log_warning(
+            "some requested packages were not found under --content",
+            missing=missing,
+        )
+        raise SystemExit(1)
+
+    for name_load_order in name_load_order_list:
+        if not name_load_order:
+            continue
+
+        package_load_order = [package_by_name[name] for name in name_load_order]
+        if package_load_order[0].corepackage:
             pass
 
+        elif any(p.corepackage for p in package_load_order):
+            log_warning(
+                "corepackage found in load order but not the first item",
+                shouldbefirst=vanilla,
+            )
+            raise SystemExit(1)
 
-def load_package(bcp: BaroContentPackage):
+        else:
+            package_load_order = [vanilla] + package_load_order
 
-    logtime("building index")
+        package_load_order_list.append(package_load_order)
+
+    return package_load_order_list
+
+
+def _resolve_content_package_paths(
+    vanilla: ContentPackage, package: ContentPackage
+) -> tuple[list[Path], list[Path]]:
+    """returns (items, texts)"""
+    items: list[Path] = []
+    texts: list[Path] = []
+
+    convert_path = partial(resolve_path, vanilla=vanilla, current=package)
+    content_paths = extract_ContentPath(package.element, convert_path)
+
+    for content in log_warnings(content_paths, path=package.xmlpath):
+        if content.kind == "item":
+            items.append(content.path)
+        elif content.kind == "text":
+            texts.append(content.path)
+        else:
+            assert False, content.kind
+
+    return items, texts
+
+
+def _iter_content_package_preitems(
+    package: ContentPackage, item_paths: list[Path]
+) -> Iterator[PreItem]:
+    for xmlpath, doc in load_xmls(item_paths):
+        for item in extract_ItemHeader(doc):
+
+            # hack when loading sprites to know what context a %ModDir% was
+            # used in; this must survive apply_variant and not break it
+            #
+            # it's quite spooky and file paths containing %ModDir% should
+            # probably almost be preprocessed earlier on but i don't know how
+            # this stuff works; it's not well documented the people on discord
+            # don't know shit
+            for element in skip_comments(item.element):
+                if element.tag.lower() in (
+                    "inventoryicon",
+                    "sprite",
+                ) and element_is_non_empty(element):
+                    element.attrib[PACKAGE_ORIGIN_KEY] = package.name
+
+            yield PreItem(
+                package=package,
+                xmlpath=xmlpath,
+                element=item.element,
+                identifier=item.identifier,
+                variant_of=item.variant_of,
+            )
+
+
+@dataclass
+class InfoTexts(object):
+    package: ContentPackage
+    language: str
+    dictionary: dict[str, str]
+
+
+def _iter_content_package_infotexts(
+    package: ContentPackage, text_paths: list[Path]
+) -> Iterator[InfoTexts]:
+    for xmlpath, doc in load_xmls(text_paths):
+
+        # TODO this assumes that root.tag == infotexts I guess?
+        root = doc.getroot()
+
+        if not (language := root.get("language")):
+            continue
+
+        # TODO warn about duplicates?
+        dictionary = dict(_iter_infotext_items(root))
+
+        if language not in dictionary and (language_name := root.get("translatedname")):
+            dictionary[language] = language_name
+
+        yield InfoTexts(package=package, language=language, dictionary=dictionary)
+
+
+def _iter_infotext_items(element: etree._Element) -> Iterator[tuple[str, str]]:
+    for child in skip_comments(element):
+        tag = child.tag.lower()
+
+        if tag == "override":
+            yield from _iter_infotext_items(child)
+
+        elif not child.text:
+            pass
+
+        elif tag == "credit":
+            yield "$", child.text
+
+        elif tag in ("fabricatorrequiresrecipe", "random"):
+            yield tag, child.text
+
+        else:
+            # fmt: off
+            msg = (   drop_prefix(tag, "entityname.")
+                   or drop_prefix(tag, "npctitle.") # merchants
+                   or drop_prefix(tag, 'fabricationdescription.')) # munition_core etc
+            # fmt: on
+            yield msg, child.text
+
+
+@dataclass
+class ItemHeader(object):
+    element: etree._Element
+    identifier: Identifier
+    variant_of: Identifier | None
+
+
+def extract_ItemHeader(doc) -> Iterator[ItemHeader]:
+    root = doc.getroot()
+    element_tag = root.tag.lower()
+
+    if element_tag == "item":
+        yield from _extract_element_ItemHeader([root])
+
+    elif element_tag == "items":
+        yield from _extract_element_ItemHeader(root)
+
+
+def _extract_element_ItemHeader(items) -> Iterator[ItemHeader]:
+    for item in skip_comments(items):
+
+        if item.tag.lower() == "override":
+            yield from _extract_element_ItemHeader(item)
+            continue
+
+        a = Attribs.from_element(item)
+
+        if not (identifier := a.opt("identifier", convert=make_identifier)):
+            continue
+
+        yield ItemHeader(
+            element=item,
+            identifier=identifier,
+            variant_of=a.opt("variantof", convert=make_identifier),
+        )
+
+
+@dataclass
+class BundlePackageMeta(object):
+    name: str
+    version: str | None
+    steamworkshopid: str | None
+
+
+@dataclass
+class Bundle(object):
+    # ordinarily ordered with Vanilla at the first index
+    load_order: list[BundlePackageMeta]
+    tags_by_identifier: dict[Identifier, list[Identifier]]
+    processes: list[Process]
+    # {language: {identifier: humantext}}
+    i18n: dict[str, dict[str, str]]
+    sprites_css: StringIO
+
+    BUNDLE_FILENAME_MANGLE_PATTERN = re.compile(r"[^a-z0-9]", flags=re.IGNORECASE)
+
+    def names(self) -> list[str]:
+        return [meta.name for meta in self.load_order]
+
+    def mangled_filename(self) -> str:
+        return "+".join(
+            self.BUNDLE_FILENAME_MANGLE_PATTERN.sub("-", name) for name in self.names()
+        )[:128]
+
+
+def build_bundle(
+    load_order: list[ContentPackage],
+    preitems_by_package: dict[str, dict[Identifier, PreItem]],
+    texts: list[InfoTexts],
+) -> Bundle:
+
+    logtime("applying variants")
+
+    vanilla = load_order[0]
+    package_by_name = {package.name: package for package in load_order}
+
+    preitem_layers = (preitems_by_package[package.name] for package in load_order)
+
+    preitem_by_identifier: dict[Identifier, PreItem]
+    preitem_by_identifier = reduce(ior, preitem_layers, {})  # ior is |=
 
     index: dict[Identifier, BaroItem] = {}
-
-    for path, doc in load_xmls(bcp.items):
-        for item in log_warnings(index_document(doc), path=path):
-            index[item.identifier] = item
-
-    logtime("loading variants")
-
-    index = load_and_apply_index_variants(index)
+    for identifier, element in log_warnings(apply_variants(preitem_by_identifier)):
+        for baro_item in log_warnings(extract_BaroItem(element)):
+            index[identifier] = baro_item
 
     logtime("reading processes from items")
 
     processes: list[Process] = []
 
     for item in index.values():
-        processes.extend(tidy_processes(log_warnings(extract_Item(item.element))))
+        xmlpath = preitem_by_identifier[item.identifier].xmlpath
+        processes.extend(
+            tidy_processes(log_warnings(extract_Item(item.element), path=xmlpath))
+        )
 
-    for i, process in enumerate_rev(processes):
-        for j, other in enumerate_rev(processes[i + 1 :]):
-            if process.id == other.id:
-                log_warning("processes share the same `id`", l=process, r=other)
+    # for i, process in enumerate_rev(processes):
+    #     for j, other in enumerate_rev(processes[i + 1 :]):
+    #         if process.id == other.id:
+    #             log_warning("processes share the same `id`", l=process, r=other)
 
     logtime(f"pruning {len(index)} items for {len(processes)} processes")
 
     index = retain_only_process_items(index, processes)
 
-    logtime(f"retained {len(index)} items; finding sprites")
-
-    sprites: dict[Identifier, Sprite] = {}
-
-    for item in index.values():
-        for sprite in log_warnings(extract_Sprite_under(item.element)):
-            sprites[item.identifier] = sprite
-            break
-
-    logtime(f"generating css for {len(sprites)} sprites")
+    logtime(f"retained {len(index)} items; generating sprites")
 
     sprites_css = StringIO()
 
-    for identifier, sprite in sprites.items():
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        texture_path = find_texture_path_on_fs(bcp.path, sprite.texture)
-        if texture_path is None:
-            log_warning("texture not found", path=sprite.texture, identifier=identifier)
-            continue
+    # dupes = {}
 
-        image = load_sprite_from_file(texture_path, sprite.ltwh)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = []
 
-        print(
-            '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
-            % (identifier, to_base64(image)),
-            file=sprites_css,
-        )
-
-    logtime("i18n")
-
-    # {language: {identifier: humantext}}
-    i18n: dict[str, dict[str, str]] = {}
-
-    should_localize: set[str] = set()
-    for process in processes:
-        should_localize.update(process.stations)
-
-        for part in process.iter_parts():
-            if part.what == MONEY:
-                continue
-            item = index.get(part.what)
-            if item and item.nameidentifier:
-                should_localize.add(item.nameidentifier)
+        for item in index.values():
+            for sprite in log_warnings(extract_Sprite_under(item.element)):
+                break
             else:
-                should_localize.add(part.what)
-
-    for path, doc in load_xmls(bcp.texts):
-        root = doc.getroot()
-        language = root.get("language")
-        if not language:
-            continue
-
-        dictionary = i18n.setdefault(language, {})
-
-        if language not in dictionary:
-            language_name = root.get("translatedname")
-            if language_name:
-                dictionary[language] = language_name
-
-        for child in skip_comments(root):
-
-            if not child.text:
+                log_warning("no sprite found", item=item)
                 continue
 
-            tag = child.tag.lower()
+            package = package_by_name[sprite.package_name]
+            xmlpath = preitem_by_identifier[item.identifier].xmlpath
 
-            if tag == "credit":
-                dictionary["$"] = child.text
-                continue
-
-            if tag in ("fabricatorrequiresrecipe", "random"):
-                dictionary[tag] = child.text
-                continue
-
-            # fmt: off
-            msg = (   drop_prefix(tag, "entityname.")
-                   or drop_prefix(tag, "npctitle.") # merchants
-                   or drop_prefix(tag, 'fabricationdescription.')) # munition_core etc
-            # fmt: on
-            if msg not in should_localize:
-                continue
-
-            if (current := dictionary.get(msg)) is not None and current != child.text:
+            try:
+                texture_path = resolve_path_with_relative_fallback(
+                    sprite.texture,
+                    vanilla=vanilla,
+                    current=package,
+                    fallback=xmlpath.parent,
+                )
+            except FileNotFoundError as error:
                 log_warning(
-                    "l10n duplicate",
-                    language=language,
-                    msg=msg,
-                    current=current,
-                    update=child.text,
+                    "texture not found",
+                    error=error,
+                    element=sprite.element,
+                    path=xmlpath,
                 )
 
-            dictionary[msg] = child.text
+            # if (texture_path, sprite.ltwh) in dupes:
+            #     log_warning(
+            #         "dupe",
+            #         item=(texture_path, sprite.ltwh, item),
+            #         dupe=dupes[(texture_path, sprite.ltwh)],
+            #     )
+            # else:
+            #     dupes[(texture_path, sprite.ltwh)] = (texture_path, sprite.ltwh, item)
+
+            futs.append(ex.submit(_meme, item.identifier, texture_path, sprite.ltwh))
+
+        for fut in as_completed(futs):
+            # exception handling?
+            print(fut.result(), file=sprites_css)
+
+            # image = load_sprite_from_file(texture_path, sprite.ltwh)
+
+            # print(
+            #     '[data-sprite="%s"] { background: url("data:image/webp;base64,%s") }'
+            #     % (item.identifier, to_base64(image)),
+            #     file=sprites_css,
+            # )
+
+    logtime(f"sprite sheet {len(sprites_css.getvalue().encode())} bytes")
+
+    should_localize: set[str] = _should_localize_from_processes(processes, index)
+    should_localize.update(("$", "fabricatorrequiresrecipe", "random"))
+
+    # {language: {identifier: humantext}}
+    i18n: dict[str, dict[str, str]] = _bundle_i18n(load_order, texts, should_localize)
+
+    # TODO warn about duplicates?
+    # if (current := dictionary.get(msg)) is not None and current != child.text:
+    #     log_warning(
+    #         "l10n duplicate",
+    #         language=language,
+    #         msg=msg,
+    #         current=current,
+    #         update=child.text,
+    #     )
+
+    # dictionary[msg] = child.text
 
     for language, dictionary in i18n.items():
         if not_found := should_localize - set(dictionary.keys()):
@@ -1432,17 +1713,63 @@ def load_package(bcp: BaroContentPackage):
     for lang, dictionary in i18n.items():
         logtime(f"{len(dictionary)} in {lang}")
 
-    return Package(
-        name=bcp.name,
+    return Bundle(
+        load_order=[
+            BundlePackageMeta(
+                name=package.name,
+                version=package.gameversion
+                if package.corepackage
+                else package.modversion,
+                steamworkshopid=package.steamworkshopid,
+            )
+            for package in load_order
+        ],
         tags_by_identifier={
             identifier: item.tags for identifier, item in index.items() if item.tags
         },
         processes=processes,
         i18n=i18n,
         sprites_css=sprites_css,
-        version=bcp.gameversion if bcp.mod is None else bcp.mod.modversion,
-        steamworkshopid=None if bcp.mod is None else bcp.mod.steamworkshopid,
     )
+
+
+def _should_localize_from_processes(
+    processes: list[Process],
+    index: dict[Identifier, BaroItem],
+) -> set[str]:
+    should_localize: set[str] = set()
+
+    for process in processes:
+        should_localize.update(process.stations)
+
+        for part in process.iter_parts():
+            if part.what == MONEY:
+                continue
+            item = index.get(part.what)  # type: ignore
+            if item and item.nameidentifier:
+                should_localize.add(item.nameidentifier)
+            else:
+                should_localize.add(part.what)
+
+    return should_localize
+
+
+def _bundle_i18n(
+    load_order: list[ContentPackage],
+    texts: list[InfoTexts],
+    should_localize: set[str],
+) -> dict[str, dict[str, str]]:
+    i18n: dict[str, dict[str, str]] = {}
+
+    for package in reversed(load_order):
+        for text in texts:
+            if text.package == package:
+                our_dictionary = i18n.setdefault(text.language, {})
+                for msg in should_localize:
+                    if msg not in our_dictionary and msg in text.dictionary:
+                        our_dictionary[msg] = text.dictionary[msg]
+
+    return i18n
 
 
 if __name__ == "__main__":

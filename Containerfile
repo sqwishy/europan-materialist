@@ -20,8 +20,7 @@ ADD baro-data.py .
 RUN mkdir -p web/assets
 RUN python3 baro-data.py \
             --content /Content \
-            --write-sprites web/assets/sprites.css \
-            > web/assets/stuff.json
+            --output web/assets/packages/
 
 
 # install web stuff
