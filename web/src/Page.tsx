@@ -1,9 +1,9 @@
 import { createSignal, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
-import { A, useSearchParams } from '@solidjs/router'
+import { A, useParams, useSearchParams } from '@solidjs/router'
 import { Show, For, Index } from 'solid-js/web'
 
 import * as Locale from "./Locale"
-import * as Filter from "./Filter"
+import * as Filters from "./Filters"
 import * as Game from '../assets/bundles'
 
 export async function fetchBundle(url: string): Promise<Game.Bundle> {
@@ -29,6 +29,7 @@ const unreachable = (n: never): never => n;
 // const dbg = v => console.log(v) || v;
 
 
+type Dictionary = Record<string, string>;
 type SearchContext = null | "only-consumed" | "only-produced";
 
 const cycleContext =
@@ -77,25 +78,42 @@ const resultsLength = (r: Results) => r.entities.length + r.processes.length
 export type Build = { hash?: string, date: Date }
 
 
+// export const Page = (props: { setTitle: (_: string) => void, build: Build }) => {
+//   const bundles = /* @once */ Game.BUNDLES;
+//   return (
+//     <>
+//     <ol class='packages'>
+//       <For each={Game.BUNDLES}>
+//         {(bundle) => 
+//           <li>
+//             <A class="bundle-select" href="?">
+//               <ol class='load-order'>
+//                 <Index each={bundle.load_order}>
+//                   {(item) => <li>{ item().name } <span class="identifier">{ item().version }</span></li>}
+//                 </Index>
+//               </ol>
+//             </A>
+//           </li>
+//          }
+//       </For>
+//     </ol>
+//   </>
+//   )
+// }
+
 export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
   const [defaultBundle] = Game.BUNDLES;
   const bundleUrl = defaultBundle.bundle;
   const [bundle] = createResource(() => fetchBundle(bundleUrl))
   const hasResource = createMemo(() => !bundle.loading && !bundle.error && bundle());
 
+  const params = useParams();
+  console.log({ ...params })
+
   return (
     <Show when={hasResource()} keyed fallback={<Loading url={bundleUrl} resource={bundle} />}>
       {(bundle) =>
         <>
-          <header>
-            <p>
-              This is a directory of <a href="https://barotraumagame.com/">Barotrauma</a> crafting recipes.
-            </p>
-            <p>
-              Use the <strong>search at the bottom</strong> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
-            </p>
-          </header>
-
           <main>
             <Content bundle={bundle} setTitle={self.setTitle} />
           </main>
@@ -113,14 +131,27 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
                 \ — generated on { DATETIME_FMT.format(self.build.date) }
               </small>
             </p>
-            <ol class='load-order'>
-                <Index each={bundle.load_order}>
-                  {(item) => <LoadOrderListItem {...item()} />}
-                </Index>
-            </ol>
+
+            <div>
+              <small>
+                <ol class='load-order'>
+                  <Index each={bundle.load_order}>
+                    {(item) => <LoadOrderListItem {...item()} />}
+                  </Index>
+                </ol>
+              </small>
+            </div>
+
+            <hr/>
+
+            <p>
+              This is a directory of Barotrauma crafting recipes.
+              Use the <b>search at the bottom</b> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
+            </p>
+
             <p>
               <small>
-                This site uses assets and content from Barotrauma.
+                This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>.
                 It is unaffiliated with <a href="https://undertowgames.com/">Undertow Games</a> or anyone else.
                 It is impartial to all clown and husk related matters.
               </small>
@@ -138,8 +169,9 @@ const LoadOrderListItem = (props: Game.Package) => {
     <li>
       <Show when={ props.steamworkshopid } fallback={ props.name }>
         <a href={`${WORKSHOP_BASE_URL}${props.steamworkshopid}`}>{ props.name }</a>
+      </Show> <Show when={ props.version }>
+        <span class="identifier">{ props.version }</span>
       </Show>
-      <span class="identifier">{ props.version }</span>
     </li>
   );
 }
@@ -162,6 +194,12 @@ export const Loading = (self: { url: string, resource: any }) => {
     </>
   )
 }
+
+
+type Update = { "search": string }
+            | { "context": SearchContext }
+            | { "limit": number }
+            | { "lang": string };
 
 
 /* language select, result listing, and search input */
@@ -198,7 +236,7 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
     let processes = self.bundle.processes
 
     if (search.substring.length) {
-      const identifier = Filter.sIdentifier({
+      const identifier = Filters.identifier({
         substring: search.substring,
         localize: getLanguage() in self.bundle.i18n
                 ? Locale.izesToLower(() => self.bundle.i18n[getLanguage()])
@@ -206,13 +244,13 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
       })
       const amount = search.context === null
                    ? undefined
-                   : Filter.sAmount(search.context)
-      const part = Filter.sPart({ amount, identifier })
-      const usedIn = Filter.sUsedInProcess({ part })
+                   : Filters.amount(search.context)
+      const part = Filters.part({ amount, identifier })
+      const usedIn = Filters.usedInProcess({ part })
 
       entities = Object.entries(self.bundle.tags_by_identifier)
-                       .filter(Filter.sEntities({ amount, identifier }))
-      processes = processes.filter(Filter.sProcesses({ amount, identifier, usedIn }))
+                       .filter(Filters.entities({ amount, identifier }))
+      processes = processes.filter(Filters.processes({ amount, identifier, usedIn }))
     }
 
     return { entities, processes }
@@ -251,6 +289,9 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
     else if ("limit" in update)
       setLimit(update.limit)
 
+    else if ("lang" in update)
+      setLanguage(update.lang)
+
     else
       unreachable(update)
   };
@@ -258,38 +299,13 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
   return (
     <>
       {/* language select */}
-        <p>
-          <select
-            onchange={(e) => setLanguage(e.currentTarget.value)}
-          >
-            <option value="">[no localization]</option>
-            <For each={Object.entries(self.bundle.i18n).sort()}>
-              {([language, dictionary]) => (
-                <option
-                  value={language}
-                  selected={getLanguage()==language}
-                >
-                  {dictionary[language] || language}
-                </option>
-              )}
-            </For>
-          </select>
-        </p>
+      <SelectLanguage language={getLanguage()} options={self.bundle.i18n} update={update} />
 
       <hr/>
 
-      {/* items / bundle list */}
-
-      <section>
-        <Locale.Context.Provider value={[localize, toEnglish]}>
-          <For each={limitedResults().entities}>
-            {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
-          </For>
-          <For each={limitedResults().processes}>
-            {(p) => <Process process={p} />}
-          </For>
-        </Locale.Context.Provider>
-      </section>
+      <Locale.Context.Provider value={[localize, toEnglish]}>
+        <EntityAndProcessList results={limitedResults()} />
+      </Locale.Context.Provider>
 
       <section class="results-length">
         <span>
@@ -310,8 +326,6 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
         </Show>
       </section>
 
-      {/* <p><button onclick={() => window.scrollTo(0, 0)}>surface 🙃</button></p> */}
-
       <hr/>
 
       <section
@@ -321,11 +335,12 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
         onmouseenter={(e) => setFixedSearch(e.target.getBoundingClientRect().top) }
         onmouseleave={() => setFixedSearch(null) }
       >
-        <Command
-          search={getSearch()}
-          update={update} />
+        <SearchFilter search={getSearch()} update={update} />
+        <ContextFilter search={getSearch()} update={update} />
+        {/* <button onclick={() => window.scrollTo(0, 0)}>⬆️</button> */}
       </section>
 
+      {/* funny hack to prevent page height change when search above switches from sticky to fixed  */}
       <p class="surrogate"><input type="text"/></p>
 
       <datalist id="cmdcomplete">
@@ -339,36 +354,65 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
 };
 
 
-type Update = { "search": string }
-            | { "context": SearchContext }
-            | { "limit": number };
-
-
-function Command(props: { search: Search, update: (_: Update) => void }) {
-  const [self, _] = splitProps(props, ["search", "update"]);
-
+const SelectLanguage = (props: { language: string, options: Record<string, Dictionary>, update: (_: Update) => void }) => {
   return (
-    <>
-      {/* substring search */}
-      <input
-        type="text"
-        class="search"
-        placeholder="search..."
-        accessKey="k"
-        list="cmdcomplete"
-        value={self.search.substring}
-        onchange={(e) => self.update({ "search": e.currentTarget.value })}
-      />
-      {/* context search */}
-      <button
-        class="context-search"
-        onclick={() => self.update({ "context": cycleContext(self.search.context) })}
-        data-current={self.search.context}
-      >
-        <span class="consumed"><span class="decoration"></span></span>
-        <span class="produced"><span class="decoration"></span></span>
-      </button>
-    </>
+    <select onchange={(e) => props.update({ "lang": e.currentTarget.value })} >
+       <option value="">[no localization]</option>
+       <For each={Object.entries(props.options).sort()}>
+         {([language, dictionary]) => (
+           <option
+             value={language}
+             selected={props.language==language}
+           >
+             {dictionary[language] || language}
+           </option>
+         )}
+       </For>
+     </select>
+  )
+}
+
+
+const EntityAndProcessList = (props: { results: Results }) => {
+  return (
+    <section>
+      <For each={props.results.entities}>
+        {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
+      </For>
+      <For each={props.results.processes}>
+        {(p) => <Process process={p} />}
+      </For>
+    </section>
+  )
+}
+
+
+function SearchFilter(props: { search: Search, update: (_: Update) => void }) {
+  const [self, _] = splitProps(props, ["search", "update"]);
+  return (
+    <input
+      type="text"
+      class="search"
+      placeholder="search..."
+      accessKey="k"
+      list="cmdcomplete"
+      value={self.search.substring}
+      onchange={(e) => self.update({ "search": e.currentTarget.value })}
+    />
+  )
+}
+
+function ContextFilter(props: { search: Search, update: (_: Update) => void }) {
+  const [self, _] = splitProps(props, ["search", "update"]);
+  return (
+    <button
+      class="context-search"
+      onclick={() => self.update({ "context": cycleContext(self.search.context) })}
+      data-current={self.search.context}
+    >
+      <span class="consumed"><span class="decoration"></span></span>
+      <span class="produced"><span class="decoration"></span></span>
+    </button>
   )
 }
 

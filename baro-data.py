@@ -69,17 +69,27 @@ export type Package = {
   steamworkshopid?: string,
 }
 
+export type Dictionary = Record<string, string>
+
 export type Bundle = {
   load_order: Package[],
   tags_by_identifier: Record<Identifier, Identifier[]>,
   processes: Process[],
-  i18n: Record<string, Record<string, string>>,
+  i18n: Record<str, Dictionary>,
 }
+
+// export type LoadableDictionary = {
+//     url: string,
+//     localized_name?: string,
+// }
 
 export type LoadableBundle = {
   load_order: Package[],
+  // url to Bundle
   bundle: string,
+  // url to CSS sprite sheet
   sprites: string,
+  // dictionaries: Record<string, LoadableDictionary>
 }
 """
 
@@ -1378,7 +1388,7 @@ def main() -> None:
         for i, bundle in enumerate(bundles):
             logtime(f"writing {bundle.names()}")
 
-            path_nosuffix = args.output / bundle.mangled_filename()
+            path_nosuffix = args.output / mangled_filename(*bundle.names())
             bundle_path = path_nosuffix.with_suffix(".json")
             css_path = path_nosuffix.with_suffix(".css")
 
@@ -1394,6 +1404,13 @@ def main() -> None:
             json.dump(dumpme, default=serialize_dataclass, fp=bundle_path.open("w"))
             logtime(f"wrote {bundle_path}")
 
+            # for language_name, dictionary in bundle.i18n.items():
+            #     language_path = path_nosuffix.with_name(
+            #         f"{path_nosuffix.name}_{mangled_filename(language_name)}.json"
+            #     )
+            #     json.dump(dictionary, fp=language_path.open("w"))
+            #     logtime(f"wrote {language_path}")
+
             print(
                 f'import {{ load_order as load_order{i} }} from "./{bundle_path.name}"',
                 file=index,
@@ -1401,13 +1418,14 @@ def main() -> None:
             print(f'import bundle{i} from "./{bundle_path.name}?url"', file=index)
             print(f'import sprites{i} from "./{css_path.name}?url"', file=index)
 
-        print("export const BUNDLES: LoadableBundle[] = [", file=index)
+        print("export const BUNDLES: LoadableBundle[] = [", file=index) # ]
         for i, bundle in enumerate(bundles):
+            pass
             print(
                 "{ "
                 "load_order: load_order%(i)d, "
                 "bundle: bundle%(i)d, "
-                "sprites: sprites%(i)d "
+                "sprites: sprites%(i)d, "
                 "}," % {"i": i},
                 file=index,
             )
@@ -1644,15 +1662,15 @@ class Bundle(object):
     i18n: dict[str, dict[str, str]]
     sprites_css: StringIO
 
-    BUNDLE_FILENAME_MANGLE_PATTERN = re.compile(r"[^a-z0-9]", flags=re.IGNORECASE)
-
     def names(self) -> list[str]:
         return [meta.name for meta in self.load_order]
 
-    def mangled_filename(self) -> str:
-        return "+".join(
-            self.BUNDLE_FILENAME_MANGLE_PATTERN.sub("-", name) for name in self.names()
-        )[:128]
+
+FILENAME_MANGLE_PATTERN = re.compile(r"[^a-z0-9]", flags=re.IGNORECASE)
+
+
+def mangled_filename(*parts: str) -> str:
+    return "+".join(FILENAME_MANGLE_PATTERN.sub("-", p) for p in parts)[:128]
 
 
 def build_bundle(

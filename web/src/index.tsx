@@ -1,6 +1,6 @@
 import { createSignal, createEffect } from 'solid-js';
 import { render, ErrorBoundary } from 'solid-js/web';
-import { Router } from '@solidjs/router'
+import { Router, Routes, Route } from '@solidjs/router'
 import { Page } from './Page';
 import { BUNDLES } from '../assets/bundles'
 
@@ -39,6 +39,12 @@ import { BUNDLES } from '../assets/bundles'
   document.head.append(link)
 }
 
+
+const BUILD = {
+  hash: import.meta.env.VITE_BUILD_HASH,
+  date: new Date(import.meta.env.VITE_BUILD_DATE || "2222-02-22T00:00:00-00:00"),
+};
+
 const DumbErrorMessage = <footer><p><b>oops</b> something hecked up! maybe reload the page and hope it doesn't happen again?</p></footer>
 
 const Main = () => {
@@ -46,15 +52,16 @@ const Main = () => {
 
   createEffect(() => (document.title = title()));
 
-  const build = {
-    hash: import.meta.env.VITE_BUILD_HASH,
-    date: new Date(import.meta.env.VITE_BUILD_DATE || "2222-02-22T00:00:00-00:00"),
-  };
-
   return (
     <ErrorBoundary fallback={DumbErrorMessage}>
       <Router base={import.meta.env.BASE_URL}>
-        <Page setTitle={setTitle} build={/*@once*/ build} />
+        <Routes>
+          <Route
+            path={["/", "/:bundle"]}
+            element={<Page setTitle={setTitle} build={/*@once*/ BUILD} />}
+          />
+          <Route path="**" element={<p>FIXME</p>} />
+        </Routes>
       </Router>
     </ErrorBoundary>
   )

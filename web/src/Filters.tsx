@@ -1,19 +1,19 @@
-import * as Data from "./Data"
+import * as Game from '../assets/bundles'
 import * as Locale from "./Locale"
 
 type AmountedFilter = (_: { amount: number }) => boolean
-type PartFilter = (_: Data.Part) => boolean
-type UsedInFilter = (_: Data.Part | Data.WeightedRandomWithReplacement) => boolean
-type IdentifierFilter = (_: Data.Identifier) => boolean
+type PartFilter = (_: Game.Part) => boolean
+type UsedInFilter = (_: Game.Part | Game.WeightedRandomWithReplacement) => boolean
+type IdentifierFilter = (_: Game.Identifier) => boolean
 
-export const sAmount =
+export const amount =
   (context : "only-consumed" | "only-produced"): AmountedFilter =>
       context === "only-consumed"
     ? ({ amount }) => amount < 0
     : ({ amount }) => amount > 0
 
 
-export const sIdentifier =
+export const identifier =
   ({ substring, localize }: { substring: string, localize?: Locale.ize }): IdentifierFilter =>
     substring === ""
   ? (_) => true
@@ -21,33 +21,33 @@ export const sIdentifier =
     || (!!localize && localize(identifier).includes(substring))
 
 
-export const sPart =
+export const part =
   ({ identifier, amount }: { identifier: IdentifierFilter, amount?: AmountedFilter }) =>
      amount === undefined
-  ? (i: Data.Part) => identifier(i.what)
-  : (i: Data.Part) => identifier(i.what) && amount(i)
+  ? (i: Game.Part) => identifier(i.what)
+  : (i: Game.Part) => identifier(i.what) && amount(i)
 
 
-export const sUsedInProcess =
+export const usedInProcess =
   ({ part }: { part: PartFilter }) =>
-  (i: Data.Part | Data.WeightedRandomWithReplacement): boolean =>
+  (i: Game.Part | Game.WeightedRandomWithReplacement): boolean =>
       "what" in i
     ? part(i)
     : i.weighted_random_with_replacement.some(part)
 
 
-export const sProcesses =
+export const processes =
   ({ identifier, amount, usedIn }:
    { identifier: IdentifierFilter, amount?: AmountedFilter, usedIn: UsedInFilter }) =>
     amount === undefined
-  ? (p: Data.Process): boolean => p.uses.some(usedIn)
+  ? (p: Game.Process): boolean => p.uses.some(usedIn)
                                || p.stations.some(identifier)
-  : (p: Data.Process): boolean => p.uses.some(usedIn)
+  : (p: Game.Process): boolean => p.uses.some(usedIn)
 
 
-export const sEntities =
+export const entities =
   ({ amount, identifier }: { identifier: IdentifierFilter, amount?: AmountedFilter }) =>
     !amount
-  ? ([ i, tags ]: [ Data.Identifier, Data.Identifier[] ]) =>
+  ? ([ i, tags ]: [ Game.Identifier, Game.Identifier[] ]) =>
        identifier(i) || tags.some(identifier)
   : (_: any) => false

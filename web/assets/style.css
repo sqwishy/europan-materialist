@@ -56,8 +56,12 @@ section, aside, header, footer
 
 hr { margin: 10px; border: 0; height: 0; border-bottom: 1px solid var(--outline); }
 
-p, .entity, .process
+section > p,
+section > div,
+footer > p,
+footer > div
   { margin: 10px }
+
 .cmd, .results-length
   { padding: 0 10px; box-sizing: border-box }
 .surrogate
@@ -89,12 +93,12 @@ p > button { margin-left: 1ch }
 
 input[inputmode=decimal] { text-align: right }
 
-ul { margin: 0; padding: 0 }
+ol, ul { list-style: none; margin: 0; padding: 0 }
 
-ol.load-order
-  { list-style: none; margin: 10px; padding: 0 }
 ol.load-order li
   { display: inline }
+ol.load-order li:not(:first-child)::before
+  { content: '&'; font-style: italic; font-size: 80%; color: var(--muted); padding: .3ch }
 
 /* positioning */
 
