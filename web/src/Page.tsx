@@ -2,13 +2,19 @@ import { createSignal, createEffect, createMemo, createResource, useContext, spl
 import { A, useSearchParams } from '@solidjs/router'
 import { Show, For, Index } from 'solid-js/web'
 
-import * as Data from "./Data"
 import * as Locale from "./Locale"
 import * as Filter from "./Filter"
-import stuffUrl from '../assets/packages/Vanilla.json?url'
+import * as Game from '../assets/bundles'
 
+export async function fetchBundle(url: string): Promise<Game.Bundle> {
+  const res = await fetch(url)
+  if (!res.ok)
+    throw new Error(res.statusText)
+  return await res.json();
+}
 
 const WIKI_BASE_URL = `https://barotraumagame.com/wiki/`;
+const WORKSHOP_BASE_URL = `https://steamcommunity.com/sharedfiles/filedetails/?id=`;
 const TITLE_DEFAULT = /* this goofs up with hot code reloading lulz */ document.title;
 const DATETIME_FMT = Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
 
@@ -38,8 +44,8 @@ type Search = {
 }
 
 type Results = {
-  entities: [/* identifier */ Data.Identifier, /* tags */ Data.Identifier[]][],
-  processes: Data.Process[],
+  entities: [/* identifier */ Game.Identifier, /* tags */ Game.Identifier[]][],
+  processes: Game.Process[],
 };
 
 
@@ -72,12 +78,14 @@ export type Build = { hash?: string, date: Date }
 
 
 export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
-  const [resource] = createResource(() => Data.fetchStuff(stuffUrl))
-  const hasResource = createMemo(() => !resource.loading && !resource.error && resource());
+  const [defaultBundle] = Game.BUNDLES;
+  const bundleUrl = defaultBundle.bundle;
+  const [bundle] = createResource(() => fetchBundle(bundleUrl))
+  const hasResource = createMemo(() => !bundle.loading && !bundle.error && bundle());
 
   return (
-    <Show when={hasResource()} keyed fallback={<Loading resource={resource} />}>
-      {(stuff) =>
+    <Show when={hasResource()} keyed fallback={<Loading url={bundleUrl} resource={bundle} />}>
+      {(bundle) =>
         <>
           <header>
             <p>
@@ -89,7 +97,7 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
           </header>
 
           <main>
-            <Content stuff={stuff} setTitle={self.setTitle} />
+            <Content bundle={bundle} setTitle={self.setTitle} />
           </main>
 
           <footer>
@@ -105,13 +113,11 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
                 \ — generated on { DATETIME_FMT.format(self.build.date) }
               </small>
             </p>
-            <p>
-              <small>
-                <Index each={stuff.load_order}>
-                  {(item) => <>{ item().name } { item().version }</>}
+            <ol class='load-order'>
+                <Index each={bundle.load_order}>
+                  {(item) => <LoadOrderListItem {...item()} />}
                 </Index>
-              </small>
-            </p>
+            </ol>
             <p>
               <small>
                 This site uses assets and content from Barotrauma.
@@ -127,7 +133,20 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
 }
 
 
-export const Loading = (self: { resource: any }) => {
+const LoadOrderListItem = (props: Game.Package) => {
+  return (
+    <li>
+      <Show when={ props.steamworkshopid } fallback={ props.name }>
+        <a href={`${WORKSHOP_BASE_URL}${props.steamworkshopid}`}>{ props.name }</a>
+      </Show>
+      <span class="identifier">{ props.version }</span>
+    </li>
+  );
+}
+
+
+export const Loading = (self: { url: string, resource: any }) => {
+  // createEffect(() => self.resource.error && console.error(self.resource.error))
   return (
     <>
       <main>
@@ -136,7 +155,7 @@ export const Loading = (self: { resource: any }) => {
             loading...
           </Show>
           <Show when={self.resource.error}>
-            <strong>failed to load...</strong> {self.resource.error.toString()}
+            <strong>failed to load... <code>{self.url}</code></strong> {self.resource.error.toString()}
           </Show>
         </div>
       </main>
@@ -146,15 +165,15 @@ export const Loading = (self: { resource: any }) => {
 
 
 /* language select, result listing, and search input */
-export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void }) => {
+export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => void }) => {
 
   /* fix search bar while mouse is over it to keep it from jumping around  */
   const [getFixedSearch, setFixedSearch] = createSignal<null | number>(null)
 
   const [getLanguage, setLanguage] = createSignal('English')
 
-  const localize: Locale.ize = Locale.izes(() => self.stuff.i18n[getLanguage()])
-  const toEnglish: Locale.ize = Locale.izes(() => self.stuff.i18n.English)
+  const localize: Locale.ize = Locale.izes(() => self.bundle.i18n[getLanguage()])
+  const toEnglish: Locale.ize = Locale.izes(() => self.bundle.i18n.English)
 
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -176,13 +195,13 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
     /* don't show entities unless there is a substring search */
     /* why can't fucking typescript infer the type for `entities` when this return type is explicit ??? */
     let entities: [string, string[]][] = [];
-    let processes = self.stuff.processes
+    let processes = self.bundle.processes
 
     if (search.substring.length) {
       const identifier = Filter.sIdentifier({
         substring: search.substring,
-        localize: getLanguage() in self.stuff.i18n
-                ? Locale.izesToLower(() => self.stuff.i18n[getLanguage()])
+        localize: getLanguage() in self.bundle.i18n
+                ? Locale.izesToLower(() => self.bundle.i18n[getLanguage()])
                 : undefined,
       })
       const amount = search.context === null
@@ -191,7 +210,7 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
       const part = Filter.sPart({ amount, identifier })
       const usedIn = Filter.sUsedInProcess({ part })
 
-      entities = Object.entries(self.stuff.tags_by_identifier)
+      entities = Object.entries(self.bundle.tags_by_identifier)
                        .filter(Filter.sEntities({ amount, identifier }))
       processes = processes.filter(Filter.sProcesses({ amount, identifier, usedIn }))
     }
@@ -216,7 +235,7 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
   })
 
   const complete = createMemo(() => {
-    const tags_by_identifier = self.stuff.tags_by_identifier;
+    const tags_by_identifier = self.bundle.tags_by_identifier;
     const allTags = Object.values(tags_by_identifier).flat();
     const allIdentifiers = allTags.concat(Object.keys(tags_by_identifier))
     return [...new Set(allIdentifiers)]
@@ -244,7 +263,7 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
             onchange={(e) => setLanguage(e.currentTarget.value)}
           >
             <option value="">[no localization]</option>
-            <For each={Object.entries(self.stuff.i18n).sort()}>
+            <For each={Object.entries(self.bundle.i18n).sort()}>
               {([language, dictionary]) => (
                 <option
                   value={language}
@@ -259,7 +278,7 @@ export const Content = (self: { stuff: Data.Stuff, setTitle: (_: string) => void
 
       <hr/>
 
-      {/* items / stuff list */}
+      {/* items / bundle list */}
 
       <section>
         <Locale.Context.Provider value={[localize, toEnglish]}>
@@ -354,7 +373,7 @@ function Command(props: { search: Search, update: (_: Update) => void }) {
 }
 
 
-function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data.Identifier[] }) {
+function Entity({ identifier, tags } : { identifier: Game.Identifier, tags: Game.Identifier[] }) {
   return (
       <div class="entity">
         <div class="item">
@@ -375,7 +394,7 @@ function Entity({ identifier, tags } : { identifier: Data.Identifier, tags: Data
 }
 
 
-function Process({ process } : { process: Data.Process }) {
+function Process({ process } : { process: Game.Process }) {
   const { skills, time, stations, uses, needs_recipe } = process;
   const [localize] = useContext(Locale.Context);
 
@@ -415,7 +434,7 @@ function Process({ process } : { process: Data.Process }) {
 }
 
 
-function UsesList({ uses } : { uses: (Data.WeightedRandomWithReplacement | Data.Part)[] }) {
+function UsesList({ uses } : { uses: (Game.WeightedRandomWithReplacement | Game.Part)[] }) {
     return (
       <For each={uses}>
         {(used) =>
@@ -427,7 +446,7 @@ function UsesList({ uses } : { uses: (Data.WeightedRandomWithReplacement | Data.
 }
 
 
-function Part({ part } : { part: Data.Part }) {
+function Part({ part } : { part: Game.Part }) {
   const { what, amount, condition } = part;
   const [condition_min, condition_max] = condition || [null, null];
 
@@ -451,7 +470,7 @@ function Part({ part } : { part: Data.Part }) {
 }
 
 
-function Sprite(props: { identifier: Data.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
+function Sprite(props: { identifier: Game.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
   const [self, rest] = splitProps(props, ["identifier", "class"]);
 
   return (
@@ -464,7 +483,7 @@ function Sprite(props: { identifier: Data.Identifier } & JSX.HTMLAttributes<HTML
 }
 
 
-function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacement }) {
+function WeightedRandom({ random } : { random: Game.WeightedRandomWithReplacement }) {
   const { weighted_random_with_replacement, amount } = random;
   const [localize] = useContext(Locale.Context);
 
@@ -480,7 +499,7 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
       {/* this ul kind of a hack so that last-of-type works */}
       <ul class="random-list">
         <For each={weighted_random_with_replacement}>
-          {(used: Data.Part) => <Part part={used} />}
+          {(used: Game.Part) => <Part part={used} />}
         </For>
       </ul>
     </>
@@ -488,7 +507,7 @@ function WeightedRandom({ random } : { random: Data.WeightedRandomWithReplacemen
 }
 
 
-function LocalizedIdentifier({ children } : { children : Data.Identifier | Data.Money }) {
+function LocalizedIdentifier({ children } : { children : Game.Identifier | Game.Money }) {
   const [localize, toEnglish] = useContext(Locale.Context);
 
   return (
@@ -508,6 +527,6 @@ function LocalizedIdentifier({ children } : { children : Data.Identifier | Data.
 }
 
 
-function Identifier({ children } : { children : Data.Identifier }) {
+function Identifier({ children } : { children : Game.Identifier }) {
   return <A href={`?q=${children}`} class="identifier">{children}</A>
 }

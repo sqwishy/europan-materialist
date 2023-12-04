@@ -2,7 +2,7 @@ import { createSignal, createEffect } from 'solid-js';
 import { render, ErrorBoundary } from 'solid-js/web';
 import { Router } from '@solidjs/router'
 import { Page } from './Page';
-import spritesCssUrl from '../assets/packages/Vanilla.css?url'
+import { BUNDLES } from '../assets/bundles'
 
 /* vite does crazy shit to index.html. it will combine css files listed in <link>
  * elements based on their file extensions.
@@ -32,9 +32,10 @@ import spritesCssUrl from '../assets/packages/Vanilla.css?url'
  * that for a second ... preloading a data uri ... what the fuck people */
 
 {
+  const [defaultBundle] = BUNDLES
   const link = document.createElement('link')
   link.rel = 'stylesheet';
-  link.href = spritesCssUrl;
+  link.href = defaultBundle.sprites;
   document.head.append(link)
 }
 
