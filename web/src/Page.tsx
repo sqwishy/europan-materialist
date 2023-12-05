@@ -134,26 +134,34 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
 
             <div>
               <small>
-                <ol class='load-order'>
-                  <Index each={bundle.load_order}>
-                    {(item) => <LoadOrderListItem {...item()} />}
-                  </Index>
-                </ol>
+                <details open>
+                  <summary>
+                    <LoadOrder loadOrder={defaultBundle.load_order} />
+                  </summary>
+                  <For each={Game.BUNDLES}>
+                    {(bundle) => (
+                      <div class="loadable-bundle">
+                        <A href={`/${bundle.name}`}>
+                          <LoadOrder loadOrder={bundle.load_order} />
+                        </A>
+                      </div>
+                    )}
+                  </For>
+                </details>
               </small>
             </div>
 
             <hr/>
 
-            <p>
-              This is a directory of Barotrauma crafting recipes.
-              Use the <b>search at the bottom</b> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
-            </p>
+            <IntroTip />
 
             <p>
               <small>
                 This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>.
-                It is unaffiliated with <a href="https://undertowgames.com/">Undertow Games</a> or anyone else.
-                It is impartial to all clown and husk related matters.
+                It is unaffiliated with <a
+                href="https://undertowgames.com/">Undertow Games</a> or any
+                other publisher -- or anyone at all really.\ 
+                <em class="muted">Have you been taking your Calyxanide?</em>
               </small>
             </p>
           </footer>
@@ -163,14 +171,31 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
   )
 }
 
+const IntroTip = () => (
+  <p>
+    This is a directory of Barotrauma crafting recipes.
+    Use the <b>search at the bottom</b> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
+  </p>
+);
 
-const LoadOrderListItem = (props: Game.Package) => {
+
+const LoadOrder = (props: { loadOrder: Game.Package[] }) => {
+  return (
+    <ol class='load-order'>
+      <Index each={props.loadOrder}>
+        {(item) => <LoadOrderListItem package={item()} />}
+      </Index>
+    </ol>
+  )
+}
+
+const LoadOrderListItem = (props: { package: Game.Package, link?: boolean }) => {
   return (
     <li>
-      <Show when={ props.steamworkshopid } fallback={ props.name }>
-        <a href={`${WORKSHOP_BASE_URL}${props.steamworkshopid}`}>{ props.name }</a>
-      </Show> <Show when={ props.version }>
-        <span class="identifier">{ props.version }</span>
+      <Show when={ props.link && props.package.steamworkshopid } fallback={ props.package.name }>
+        <a href={`${WORKSHOP_BASE_URL}${props.package.steamworkshopid}`}>{ props.package.name }</a>
+      </Show> <Show when={ props.package.version }>
+        <span class="identifier">{ props.package.version }</span>
       </Show>
     </li>
   );
@@ -198,8 +223,7 @@ export const Loading = (self: { url: string, resource: any }) => {
 
 type Update = { "search": string }
             | { "context": SearchContext }
-            | { "limit": number }
-            | { "lang": string };
+            | { "limit": number };
 
 
 /* language select, result listing, and search input */
@@ -208,7 +232,7 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
   /* fix search bar while mouse is over it to keep it from jumping around  */
   const [getFixedSearch, setFixedSearch] = createSignal<null | number>(null)
 
-  const [getLanguage, setLanguage] = createSignal('English')
+  const [getLanguage] = createSignal('English')
 
   const localize: Locale.ize = Locale.izes(() => self.bundle.i18n[getLanguage()])
   const toEnglish: Locale.ize = Locale.izes(() => self.bundle.i18n.English)
@@ -227,55 +251,16 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
 
   const getSearch = createMemo((): Search => stringToSearch(getSearchText()))
 
-  const filteredResults = createMemo((): Results => {
-    const search = getSearch();
+  const filtersBySearch = filtersBundle({ getSearch, getLanguage });
+  const filteredResults = createMemo((): Results => filtersBySearch(self.bundle));
 
-    /* don't show entities unless there is a substring search */
-    /* why can't fucking typescript infer the type for `entities` when this return type is explicit ??? */
-    let entities: [string, string[]][] = [];
-    let processes = self.bundle.processes
+  const limitsByLimit = limitsResults(getLimit);
+  const limitedResults = createMemo((): Results => limitsByLimit(filteredResults()))
 
-    if (search.substring.length) {
-      const identifier = Filters.identifier({
-        substring: search.substring,
-        localize: getLanguage() in self.bundle.i18n
-                ? Locale.izesToLower(() => self.bundle.i18n[getLanguage()])
-                : undefined,
-      })
-      const amount = search.context === null
-                   ? undefined
-                   : Filters.amount(search.context)
-      const part = Filters.part({ amount, identifier })
-      const usedIn = Filters.usedInProcess({ part })
-
-      entities = Object.entries(self.bundle.tags_by_identifier)
-                       .filter(Filters.entities({ amount, identifier }))
-      processes = processes.filter(Filters.processes({ amount, identifier, usedIn }))
-    }
-
-    return { entities, processes }
-  })
-
-  const limitedResults = createMemo((): Results => {
-    let limit: number;
-    let { entities, processes } = filteredResults();
-
-    if ((limit = getLimit()) <= 0)
-        return { entities, processes };
-
-    entities = entities.slice(0, limit);
-
-    limit -= entities.length;
-
-    processes = processes.slice(0, limit);
-
-    return { entities, processes };
-  })
-
-  const complete = createMemo(() => {
-    const tags_by_identifier = self.bundle.tags_by_identifier;
-    const allTags = Object.values(tags_by_identifier).flat();
-    const allIdentifiers = allTags.concat(Object.keys(tags_by_identifier))
+  const ctlcomplete = createMemo(() => {
+    const tagsByIdentifier = self.bundle.tags_by_identifier;
+    const allTags = Object.values(tagsByIdentifier).flat();
+    const allIdentifiers = allTags.concat(Object.keys(tagsByIdentifier))
     return [...new Set(allIdentifiers)]
   })
 
@@ -289,9 +274,6 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
     else if ("limit" in update)
       setLimit(update.limit)
 
-    else if ("lang" in update)
-      setLanguage(update.lang)
-
     else
       unreachable(update)
   };
@@ -299,37 +281,43 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
   return (
     <>
       {/* language select */}
-      <SelectLanguage language={getLanguage()} options={self.bundle.i18n} update={update} />
-
-      <hr/>
+      {/* <SelectLanguage language={getLanguage()} options={self.bundle.i18n} update={update} /> */}
 
       <Locale.Context.Provider value={[localize, toEnglish]}>
-        <EntityAndProcessList results={limitedResults()} />
-      </Locale.Context.Provider>
+        <section>
+          <For each={limitedResults().entities}>
+            {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
+          </For>
 
-      <section class="results-length">
-        <span>
-          showing <b>{resultsLength(limitedResults())}</b
-          > of <b>{resultsLength(filteredResults())}</b>
-        </span>
-        <Show when={resultsLength(limitedResults()) < resultsLength(filteredResults())}>
-          <input
-            id="limit"
-            type="text"
-            size="4"
-            inputmode="decimal"
-            placeholder="limit..."
-            value={getLimit()}
-            onchange={(e) => update({ "limit": parseInt(e.currentTarget.value, 10) || 0 })}
-          />
-          <button onclick={() => update({ "limit": resultsLength(limitedResults()) + 100 })}>+100</button>
-        </Show>
-      </section>
+          <For each={limitedResults().processes}>
+            {(p) => <Process process={p} />}
+          </For>
+
+          <div class="results-length">
+            <span>
+              showing <b>{resultsLength(limitedResults())}</b
+              > of <b>{resultsLength(filteredResults())}</b>
+            </span>
+            <Show when={resultsLength(limitedResults()) < resultsLength(filteredResults())}>
+              <input
+                id="limit"
+                type="text"
+                size="4"
+                inputmode="decimal"
+                placeholder="limit..."
+                value={getLimit()}
+                onchange={(e) => update({ "limit": parseInt(e.currentTarget.value, 10) || 0 })}
+              />
+              <button onclick={() => update({ "limit": resultsLength(limitedResults()) + 100 })}>+100</button>
+            </Show>
+          </div>
+        </section>
+      </Locale.Context.Provider>
 
       <hr/>
 
-      <section
-        class="cmd"
+      <div
+        class="ctl"
         data-fixed={getFixedSearch() !== null ? '' : undefined}
         style={{ top: getFixedSearch() !== null ? `${getFixedSearch()}px` : undefined }}
         onmouseenter={(e) => setFixedSearch(e.target.getBoundingClientRect().top) }
@@ -337,14 +325,15 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
       >
         <SearchFilter search={getSearch()} update={update} />
         <ContextFilter search={getSearch()} update={update} />
-        {/* <button onclick={() => window.scrollTo(0, 0)}>⬆️</button> */}
-      </section>
+        <button title="up" onclick={() => window.scrollTo(0, 0)}>⬆️</button>
+        <button title="down" onclick={() => window.scrollTo(0, 0)}>⬇️</button>
+      </div>
 
       {/* funny hack to prevent page height change when search above switches from sticky to fixed  */}
-      <p class="surrogate"><input type="text"/></p>
+      <div class="surrogate"><input type="text" aria-hidden="true" /></div>
 
-      <datalist id="cmdcomplete">
-        <For each={complete()}>
+      <datalist id="ctlcomplete">
+        <For each={ctlcomplete()}>
           {(value) => <option value={value} />}
         </For>
       </datalist>
@@ -353,38 +342,58 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
   );
 };
 
+const filtersBundle =
+  ({ getSearch, getLanguage } : { getSearch: () => Search, getLanguage: () => string }) =>
+  (bundle: Bundle) => {
+    const search = getSearch();
 
-const SelectLanguage = (props: { language: string, options: Record<string, Dictionary>, update: (_: Update) => void }) => {
-  return (
-    <select onchange={(e) => props.update({ "lang": e.currentTarget.value })} >
-       <option value="">[no localization]</option>
-       <For each={Object.entries(props.options).sort()}>
-         {([language, dictionary]) => (
-           <option
-             value={language}
-             selected={props.language==language}
-           >
-             {dictionary[language] || language}
-           </option>
-         )}
-       </For>
-     </select>
-  )
-}
+    /* temporary -- FIXME -- don't show anything unless a substring search is used */
+    if (!search.substring.length)
+      return { entities: [], processes: [] }
 
+    /* don't show entities unless there is a substring search */
+    /* why can't fucking typescript infer the type for `entities`
+    * when this return type is explicit ??? */
+    let entities: [string, string[]][] = [];
+    let processes = bundle.processes
 
-const EntityAndProcessList = (props: { results: Results }) => {
-  return (
-    <section>
-      <For each={props.results.entities}>
-        {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
-      </For>
-      <For each={props.results.processes}>
-        {(p) => <Process process={p} />}
-      </For>
-    </section>
-  )
-}
+    if (search.substring.length) {
+      const identifier = Filters.identifier({
+        substring: search.substring,
+        localize: getLanguage() in bundle.i18n
+                ? Locale.izesToLower(() => bundle.i18n[getLanguage()])
+                : undefined,
+      })
+      const amount = search.context === null
+                   ? undefined
+                   : Filters.amount(search.context)
+      const part = Filters.part({ amount, identifier })
+      const usedIn = Filters.usedInProcess({ part })
+
+      entities = Object.entries(bundle.tags_by_identifier)
+                       .filter(Filters.entities({ amount, identifier }))
+      processes = processes.filter(Filters.processes({ amount, identifier, usedIn }))
+    }
+
+    return { entities, processes }
+  }
+
+const limitsResults =
+  (getLimit: () => number) =>
+  ({ entities, processes }: Results) => {
+    let limit: number;
+
+    if ((limit = getLimit()) <= 0)
+        return { entities, processes };
+
+    entities = entities.slice(0, limit);
+
+    limit -= entities.length;
+
+    processes = processes.slice(0, limit);
+
+    return { entities, processes };
+  }
 
 
 function SearchFilter(props: { search: Search, update: (_: Update) => void }) {
@@ -393,9 +402,10 @@ function SearchFilter(props: { search: Search, update: (_: Update) => void }) {
     <input
       type="text"
       class="search"
+      title="search by identifier or item name"
       placeholder="search..."
       accessKey="k"
-      list="cmdcomplete"
+      list="ctlcomplete"
       value={self.search.substring}
       onchange={(e) => self.update({ "search": e.currentTarget.value })}
     />
@@ -407,6 +417,7 @@ function ContextFilter(props: { search: Search, update: (_: Update) => void }) {
   return (
     <button
       class="context-search"
+      title="cycle filter produced or consumed"
       onclick={() => self.update({ "context": cycleContext(self.search.context) })}
       data-current={self.search.context}
     >

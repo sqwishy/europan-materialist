@@ -65,17 +65,18 @@ export type Process = {
 
 export type Package = {
   name: string,
-  version?: string,
-  steamworkshopid?: string,
+  version: string | null,
+  steamworkshopid: string | null,
 }
 
 export type Dictionary = Record<string, string>
 
 export type Bundle = {
+  name: string,
   load_order: Package[],
   tags_by_identifier: Record<Identifier, Identifier[]>,
   processes: Process[],
-  i18n: Record<str, Dictionary>,
+  i18n: Record<string, Dictionary>,
 }
 
 // export type LoadableDictionary = {
@@ -84,11 +85,10 @@ export type Bundle = {
 // }
 
 export type LoadableBundle = {
+  name: string,
   load_order: Package[],
-  // url to Bundle
-  bundle: string,
-  // url to CSS sprite sheet
-  sprites: string,
+  bundle: string, // url to Bundle
+  sprites: string, // url to CSS sprite sheet
   // dictionaries: Record<string, LoadableDictionary>
 }
 """
@@ -1388,14 +1388,15 @@ def main() -> None:
         for i, bundle in enumerate(bundles):
             logtime(f"writing {bundle.names()}")
 
-            path_nosuffix = args.output / mangled_filename(*bundle.names())
-            bundle_path = path_nosuffix.with_suffix(".json")
-            css_path = path_nosuffix.with_suffix(".css")
+            name = mangled_filename(*(f"{p.name}-{p.version}" for p in bundle.load_order))
+            bundle_path = args.output / name.with_suffix(".json")
+            css_path = args.output / name.with_suffix(".css")
 
             css_path.open("w").write(bundle.sprites_css.getvalue())
             logtime(f"wrote {css_path}")
 
             dumpme = {
+                "name": name,
                 "load_order": bundle.load_order,
                 "tags_by_identifier": bundle.tags_by_identifier,
                 "processes": bundle.processes,
@@ -1412,17 +1413,18 @@ def main() -> None:
             #     logtime(f"wrote {language_path}")
 
             print(
-                f'import {{ load_order as load_order{i} }} from "./{bundle_path.name}"',
+                f'import {{ load_order as load_order{i}, name as name{i}, }} from "./{bundle_path.name}"',
                 file=index,
             )
             print(f'import bundle{i} from "./{bundle_path.name}?url"', file=index)
             print(f'import sprites{i} from "./{css_path.name}?url"', file=index)
 
-        print("export const BUNDLES: LoadableBundle[] = [", file=index) # ]
+        print("export const BUNDLES: LoadableBundle[] = [", file=index)
         for i, bundle in enumerate(bundles):
             pass
             print(
                 "{ "
+                "name: name%(i)d, "
                 "load_order: load_order%(i)d, "
                 "bundle: bundle%(i)d, "
                 "sprites: sprites%(i)d, "
@@ -1654,16 +1656,13 @@ class BundlePackageMeta(object):
 
 @dataclass
 class Bundle(object):
-    # ordinarily ordered with Vanilla at the first index
+    # should be ordered with Vanilla (or core package) at the first index
     load_order: list[BundlePackageMeta]
     tags_by_identifier: dict[Identifier, list[Identifier]]
     processes: list[Process]
     # {language: {identifier: humantext}}
     i18n: dict[str, dict[str, str]]
     sprites_css: StringIO
-
-    def names(self) -> list[str]:
-        return [meta.name for meta in self.load_order]
 
 
 FILENAME_MANGLE_PATTERN = re.compile(r"[^a-z0-9]", flags=re.IGNORECASE)

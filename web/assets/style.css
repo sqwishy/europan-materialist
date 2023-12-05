@@ -5,6 +5,7 @@
   {  --item: var(--solar84);
     --input: var(--solar84);
   --outline: var(--solar60);
+ --linkline: var(--solar60);
    --shadow: var(--solar48);
      --page: var(--solar72);
      --text: var(--solar00);
@@ -23,6 +24,7 @@
   {  --item: var(--ayu24);
     --input: var(--ayu24);
   --outline: var(--ayu36);
+ --linkline: var(--ayu24);
    --shadow: var(--ayu00);
      --page: var(--ayu12);
      --text: var(--ayu96);
@@ -34,19 +36,17 @@
         --station-text: var(--ayu96);
  --station-text-shadow: var(--ayu12);
        --station-muted: var(--ayu84);
-       --station-light: var(--ayu48); } }
+       --station-light: var(--ayu48);
+   } }
 
 body
-  { font: 1rem/1.1 'Exo 2', sans-serif;
+  { font: 1rem/1.1 sans-serif;
     background-color: var(--page);
                color: var(--text);
               margin: 0 }
 
-header, footer
-  { font-family: sans-serif;  }
-
-section, aside, header, footer
-  { max-width: 50ch; }
+.item, .entity, .results-length, .ctl, .surrogate
+  { font-family: 'Exo 2', sans-serif }
 
 .loading-screen
            { margin: 3ch auto;
@@ -54,18 +54,24 @@ section, aside, header, footer
   font-variant-caps: small-caps;
           max-width: 20ch }
 
-hr { margin: 10px; border: 0; height: 0; border-bottom: 1px solid var(--outline); }
+hr { border: 0; height: 0; border-bottom: 1px solid var(--outline); }
 
+main > p,
+main > div,
+main > hr,
 section > p,
 section > div,
+section > hr,
 footer > p,
-footer > div
-  { margin: 10px }
+footer > div,
+footer > hr
+  { margin: 10px; max-width: 480px; box-sizing: border-box }
 
-.cmd, .results-length
-  { padding: 0 10px; box-sizing: border-box }
 .surrogate
   { display: none; visibility: hidden }
+
+
+.muted { color: var(--muted) }
 
 
 a, input, button, select
@@ -95,16 +101,25 @@ input[inputmode=decimal] { text-align: right }
 
 ol, ul { list-style: none; margin: 0; padding: 0 }
 
+.loadable-bundle
+  { margin-left: 1em }
+
+ol.load-order,
 ol.load-order li
   { display: inline }
 ol.load-order li:not(:first-child)::before
-  { content: '&'; font-style: italic; font-size: 80%; color: var(--muted); padding: .3ch }
+  { content: '&'; font-style: italic; color: var(--muted);
+    font-size: 80%; vertical-align: bottom; padding: .3ch }
 
 /* positioning */
 
 .results-length { display: flex; align-items: center }
 .results-length > *:first-child { flex-grow: 1 }
 
+
+a:not(.identifier):not(.wiki-link)
+  { text-decoration-thickness: 4px;
+    text-decoration-color: var(--linkline) }
 
 a.wiki-link:not(:hover),
 a.identifier:not(:hover)
@@ -198,11 +213,12 @@ a.identifier:not(:hover)
 .item.stations
   {          color: var(--station-text);
            --muted: var(--station-muted);
+         --outline: var(--station-outline);
        text-shadow: 1px   1px var(--station-text-shadow);
   background-color: var(--station-item);
             border: 1px solid var(--station-light);
-            border-top-color: var(--station-outline);
-         border-bottom-color: var(--station-outline);
+            border-top-color: var(--outline);
+         border-bottom-color: var(--outline);
         box-shadow: inset 0px  1px var(--station-light),
                     inset 0px -1px var(--station-light) }
 
@@ -253,31 +269,33 @@ a.identifier:not(:hover)
 .identifier::after  { content: '}' }
 
 
-.cmd
+.ctl
   { position: sticky;
       bottom: 10px;
      z-index: 1;
      display: flex }
 
+.ctl { grid-gap: .5ch }
+
 @media (pointer: fine)
-  { .cmd[data-fixed]
-      { position: fixed; width: 100%; bottom: unset }
-    .cmd[data-fixed] + .surrogate
+  { .ctl[data-fixed]
+      { position: fixed; width: 100%; bottom: unset; margin-top: 0 }
+    .ctl[data-fixed] + .surrogate
       { display: block } }
 
-.cmd > * { flex: 0 0 auto }
-.cmd > .search { flex: 1 1 min-content; min-width: 0 }
+.ctl > * { flex: 0 0 auto }
+.ctl > .search { flex: 1 1 min-content; min-width: 0 }
 
 
-.cmd .context-search
+.ctl .context-search
   { display: flex;
     padding: 0;
     width: 40px }
 
 
-.cmd .context-search
+.ctl .context-search
   { position: relative }
-.cmd .context-search > *
+.ctl .context-search > *
   { position: absolute;
     left: 0; top: 0;
     width: 100%; height: 100%;
@@ -285,24 +303,24 @@ a.identifier:not(:hover)
     display: flex }
 
 
-.cmd .context-search .decoration
+.ctl .context-search .decoration
   { width: 24px; margin: 0 8px; pointer-events: none }
 
 
-.cmd .context-search > *
+.ctl .context-search > *
   { --reach: 70%;
     --floor: calc(100% + 1px) }
-.cmd .context-search:not([data-current]) > .consumed
+.ctl .context-search:not([data-current]) > .consumed
   { clip-path: polygon(0    0%,  var(--reach) 0%,  calc(100% - var(--reach)) var(--floor),     0 var(--floor)) }
-.cmd .context-search:not([data-current]) > .produced
+.ctl .context-search:not([data-current]) > .produced
   { clip-path: polygon(100% 0%,  var(--reach) 0%,  calc(100% - var(--reach)) var(--floor),  100% var(--floor)) }
 
-.cmd .context-search[data-current='only-consumed'] .produced
+.ctl .context-search[data-current='only-consumed'] .produced
   { display: none }
-.cmd .context-search[data-current='only-produced'] .consumed
+.ctl .context-search[data-current='only-produced'] .consumed
   { display: none }
 
-.cmd .context-search > .consumed > .decoration
+.ctl .context-search > .consumed > .decoration
   { background-color: var(--consumed) }
-.cmd .context-search > .produced > .decoration
+.ctl .context-search > .produced > .decoration
   { background-color: var(--produced) }
