@@ -95,84 +95,82 @@ const resultsLength = (r: Results) => r.entities.length + r.processes.length
 export type Build = { hash?: string, date: Date }
 
 
-export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
+export const Page = (props: { setTitle: (_: string) => void, build: Build }) => {
   const navigate = useNavigate();
   const params = useParams();
   const bundleParam = () => params.bundle;
-  const getLoadableBundle = createMemo(looksupLoadableBundleFromBundleParam({ bundleParam, navigate }))
-  const [bundle] = createResource(getLoadableBundle, fetchBundle)
+  const getCurrentLoadableBundle = createMemo(looksupLoadableBundleFromBundleParam({ bundleParam, navigate }))
+  const [bundle] = createResource(getCurrentLoadableBundle, fetchBundle)
   const hasResource = createMemo(() => !bundle.loading && !bundle.error && bundle());
 
   return (
-    <Show
-      when={hasResource()}
-      keyed
-      fallback={<Loading url={getLoadableBundle().url} resource={bundle} />}
-    >
-      {(bundle) =>
-        <>
-          <main>
-            <ListAndSearch bundle={bundle} setTitle={self.setTitle} />
-          </main>
+    <>
+      <main>
+        <Show
+          when={hasResource()}
+          keyed
+          fallback={<Loading url={getCurrentLoadableBundle().url} resource={bundle} />}
+        >
+          {(bundle) =><ListAndSearch bundle={bundle} setTitle={props.setTitle} />}
+        </Show>
+      </main>
 
-          <footer>
-            <p>
+      <footer>
+        <p>
+          <small>
+            <a href="https://github.com/sqwishy/europan-materialist">
+              github
+            </a>
+            <Show when={ props.build.hash }>
+              {" "}
+              <span class="identifier">{ props.build.hash }</span>
+            </Show>
+            \ — generated on { DATETIME_FMT.format(props.build.date) }
+          </small>
+        </p>
+
+        <div>
+          <details open>
+            <summary>
               <small>
-                <a href="https://github.com/sqwishy/europan-materialist">
-                  github
-                </a>
-                <Show when={ self.build.hash }>
-                  {" "}
-                  <span class="identifier">{ self.build.hash }</span>
-                </Show>
-                \ — generated on { DATETIME_FMT.format(self.build.date) }
+                <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} />
               </small>
-            </p>
-
-            <div>
-              <details open>
-                <summary>
-                  <small>
+            </summary>
+            <For each={Game.BUNDLES}>
+              {(bundle) => (
+                <div class="loadable-bundle">
+                  <A href={`/${bundle.name}`}>
                     <LoadOrder loadOrder={bundle.load_order} />
-                  </small>
-                </summary>
-                <For each={Game.BUNDLES}>
-                  {(bundle) => (
-                    <div class="loadable-bundle">
-                      <A href={`/${bundle.name}`}>
-                        <LoadOrder loadOrder={bundle.load_order} />
-                      </A>
-                    </div>
-                  )}
-                </For>
-              </details>
-            </div>
+                  </A>
+                </div>
+              )}
+            </For>
+          </details>
+        </div>
 
-            <hr/>
-
-            <IntroTip />
-
-            <p>
-              <small>
-                This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>.
-                It is unaffiliated with <a
-                href="https://undertowgames.com/">Undertow Games</a> or any
-                other publisher -- or anyone at all really.\ 
-                <em class="muted">Have you been taking your Calyxanide?</em>
-              </small>
-            </p>
-          </footer>
-        </>
-      }
-    </Show>
+        <p>
+          <small>
+            This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>.
+            It is unaffiliated with <a
+            href="https://undertowgames.com/">Undertow Games</a> or any
+            other publisher -- or anyone at all really.\ 
+            <em class="muted">Have you been taking your Calyxanide?</em>
+          </small>
+        </p>
+      </footer>
+    </>
   )
 }
 
 const IntroTip = () => (
-  <p>
-    This is a directory of Barotrauma crafting recipes.
-    Use the <b>search at the bottom</b> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
-  </p>
+  <>
+    <p>
+      This is a directory of Barotrauma crafting recipes.
+    </p>
+    <p>
+      Use the <b>search at the bottom</b> of the screen or click the words inside braces like <A href="?q=meth" class="identifier">meth</A>.
+    </p>
+  </>
 );
 
 
@@ -199,21 +197,17 @@ const LoadOrderListItem = (props: { package: Game.Package, link?: boolean }) => 
 }
 
 
-export const Loading = (self: { url: string, resource: any }) => {
-  // createEffect(() => self.resource.error && console.error(self.resource.error))
+export const Loading = (props: { url: string, resource: any }) => {
+  // createEffect(() => props.resource.error && console.error(props.resource.error))
   return (
-    <>
-      <main>
-        <div class="loading-screen">
-          <Show when={self.resource.loading}>
-            loading...
-          </Show>
-          <Show when={self.resource.error}>
-            <strong>failed to load... <code>{self.url}</code></strong> {self.resource.error.toString()}
-          </Show>
-        </div>
-      </main>
-    </>
+    <div class="loading-screen">
+      <Show when={props.resource.loading}>
+        loading...
+      </Show>
+      <Show when={props.resource.error}>
+        <strong>failed to load... <code>{props.url}</code></strong> {props.resource.error.toString()}
+      </Show>
+    </div>
   )
 }
 
@@ -224,15 +218,15 @@ type Update = { "search": string }
 
 
 /* result listing, and search input */
-export const ListAndSearch = (self: { bundle: Game.Bundle, setTitle: (_: string) => void }) => {
+export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string) => void }) => {
 
   /* fix search bar while mouse is over it to keep it from jumping around  */
   const [getFixedSearch, setFixedSearch] = createSignal<null | number>(null)
 
   const [getLanguage] = createSignal('English')
 
-  const localize: Locale.ize = Locale.izes(() => self.bundle.i18n[getLanguage()])
-  const toEnglish: Locale.ize = Locale.izes(() => self.bundle.i18n.English)
+  const localize: Locale.ize = Locale.izes(() => props.bundle.i18n[getLanguage()])
+  const toEnglish: Locale.ize = Locale.izes(() => props.bundle.i18n.English)
 
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -242,20 +236,20 @@ export const ListAndSearch = (self: { bundle: Game.Bundle, setTitle: (_: string)
   const getLimit = () => parseInt(searchParams.limit, 10) || 50
   const setLimit = (limit: number) => setSearchParams({ limit })
 
-  createEffect(() => self.setTitle(  getSearchText()
+  createEffect(() => props.setTitle(  getSearchText()
                                    ? `${getSearchText()} — ${TITLE_DEFAULT}`
                                    : TITLE_DEFAULT))
 
   const getSearch = createMemo((): Search => stringToSearch(getSearchText()))
 
   const filtersBySearch = filtersBundle({ getSearch, getLanguage });
-  const filteredResults = createMemo((): Results => filtersBySearch(self.bundle));
+  const filteredResults = createMemo((): Results => filtersBySearch(props.bundle));
 
   const limitsByLimit = limitsResults(getLimit);
   const limitedResults = createMemo((): Results => limitsByLimit(filteredResults()))
 
   const ctlcomplete = createMemo(() => {
-    const tagsByIdentifier = self.bundle.tags_by_identifier;
+    const tagsByIdentifier = props.bundle.tags_by_identifier;
     const allTags = Object.values(tagsByIdentifier).flat();
     const allIdentifiers = allTags.concat(Object.keys(tagsByIdentifier))
     return [...new Set(allIdentifiers)]
@@ -279,6 +273,7 @@ export const ListAndSearch = (self: { bundle: Game.Bundle, setTitle: (_: string)
     <>
       <Locale.Context.Provider value={[localize, toEnglish]}>
         <section>
+
           <For each={limitedResults().entities}>
             {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
           </For>
@@ -286,6 +281,10 @@ export const ListAndSearch = (self: { bundle: Game.Bundle, setTitle: (_: string)
           <For each={limitedResults().processes}>
             {(p) => <Process process={p} />}
           </For>
+
+          <Show when={!getSearch().substring}>
+            <IntroTip />
+          </Show>
 
           <div class="results-length">
             <span>
@@ -391,7 +390,6 @@ const limitsResults =
 
 
 function SearchFilter(props: { search: Search, update: (_: Update) => void }) {
-  const [self, _] = splitProps(props, ["search", "update"]);
   return (
     <input
       type="text"
@@ -400,20 +398,19 @@ function SearchFilter(props: { search: Search, update: (_: Update) => void }) {
       placeholder="search..."
       accessKey="k"
       list="ctlcomplete"
-      value={self.search.substring}
-      onchange={(e) => self.update({ "search": e.currentTarget.value })}
+      value={props.search.substring}
+      onchange={(e) => props.update({ "search": e.currentTarget.value })}
     />
   )
 }
 
 function ContextFilter(props: { search: Search, update: (_: Update) => void }) {
-  const [self, _] = splitProps(props, ["search", "update"]);
   return (
     <button
       class="context-search"
       title="cycle filter produced or consumed"
-      onclick={() => self.update({ "context": cycleContext(self.search.context) })}
-      data-current={self.search.context}
+      onclick={() => props.update({ "context": cycleContext(props.search.context) })}
+      data-current={props.search.context}
     >
       <span class="consumed"><span class="decoration"></span></span>
       <span class="produced"><span class="decoration"></span></span>
@@ -519,14 +516,14 @@ function Part({ part } : { part: Game.Part }) {
 }
 
 
-function Sprite(props: { identifier: Game.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
-  const [self, rest] = splitProps(props, ["identifier", "class"]);
+function Sprite(props_: { identifier: Game.Identifier } & JSX.HTMLAttributes<HTMLSpanElement>) {
+  const [props, rest] = splitProps(props_, ["identifier", "class"]);
 
   return (
     <span
-      class={`sprite ${self.class || ''}`}
+      class={`sprite ${props.class || ''}`}
       {...rest}
-      data-sprite={self.identifier}
+      data-sprite={props.identifier}
     >&emsp;</span>
   )
 }
