@@ -12,31 +12,40 @@
     --muted: var(--solar24);
  --consumed: var(--solar-red50);
  --produced: var(--solar-cyan50);
+      --mod: #6767e0;
         --station-item: var(--solar24);
      --station-outline: var(--solar12);
         --station-text: var(--solar96);
  --station-text-shadow: var(--solar00);
        --station-muted: var(--solar84);
-       --station-light: var(--solar36); }
+       --station-light: var(--solar36);
+        --chevron-open: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Cpath d='M 1 1 l 1 1 l 1 -1' stroke='%23002b36' stroke-width='0.5' fill='none'/%3E%3C/svg%3E");
+      --chevron-active: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Cpath d='M 3 1 l -1 1 l 1 1' stroke='%236767e0' stroke-width='0.5' fill='none'/%3E%3C/svg%3E");
+       --chevron-hover: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Cpath d='M 3 1 l -1 1 l 1 1' stroke='%23002b36' stroke-width='0.5' fill='none'/%3E%3C/svg%3E");
+     }
 
 @media (prefers-color-scheme: dark) {
 :root
   {  --item: var(--ayu24);
     --input: var(--ayu24);
   --outline: var(--ayu36);
- --linkline: var(--ayu24);
+ --linkline: var(--ayu36);
    --shadow: var(--ayu00);
      --page: var(--ayu12);
      --text: var(--ayu96);
     --muted: var(--ayu72);
- --consumed: #F07171;
- --produced: #4CBF99;
+ --consumed: #f07171;
+ --produced: #4cbf99;
+      --mod: #d2a6ff;
         --station-item: var(--ayu36);
      --station-outline: var(--ayu24);
         --station-text: var(--ayu96);
  --station-text-shadow: var(--ayu12);
        --station-muted: var(--ayu84);
        --station-light: var(--ayu48);
+        --chevron-open: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Cpath d='M 1 1 l 1 1 l 1 -1' stroke='%23f8f9fa' stroke-width='0.5' fill='none'/%3E%3C/svg%3E");
+      --chevron-active: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Cpath d='M 3 1 l -1 1 l 1 1' stroke='%23d2a6ff' stroke-width='0.5' fill='none'/%3E%3C/svg%3E");
+       --chevron-hover: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Cpath d='M 3 1 l -1 1 l 1 1' stroke='%23f8f9fa' stroke-width='0.5' fill='none'/%3E%3C/svg%3E");
    } }
 
 body
@@ -56,15 +65,14 @@ body
 
 hr { border: 0; height: 0; border-bottom: 1px solid var(--outline); }
 
+header > p,
+header > div,
 main > p,
 main > div,
-main > hr,
 section > p,
 section > div,
-section > hr,
 footer > p,
-footer > div,
-footer > hr
+footer > div
   { margin: 10px; max-width: 500px; box-sizing: border-box }
 
 
@@ -80,8 +88,8 @@ a, input, button, select
     line-height: normal }
 
 
-button, input[type=text], select
-  { padding:    0.5ch 0.4ch;
+button, input[type=text], select, details.select-bundle
+  { padding:    6px 9px;
     box-sizing: content-box;
     background-color: var(--input);
     border:           1px solid var(--outline);
@@ -94,21 +102,41 @@ button:disabled { cursor: not-allowed }
 
 p > button { margin-left: 1ch }
 
+details.select-bundle > a.active {}
+
+details.select-bundle > summary,
+details.select-bundle > .loadable-bundle a
+  { padding-right: 3ch; display: block }
+details.select-bundle > summary
+  { background: no-repeat center right 6px / 2ch var(--chevron-open) }
+details.select-bundle > .loadable-bundle a:hover
+  { background: no-repeat center right 6px / 2ch var(--chevron-hover) }
+details.select-bundle > .loadable-bundle a.active:not(:hover)
+  { background: no-repeat center right 6px / 2ch var(--chevron-active) ; }
+
+
+details.select-bundle
+  { padding: 0 }
+details.select-bundle ol.load-order
+  { padding: 6px 9px }
+details.select-bundle > summary
+  { list-style: none }
+details.select-bundle[open] > summary
+  { border-bottom: 1px solid var(--outline) }
+
+ol.load-order li
+  { display: inline }
+ol.load-order li:not(:first-child)::before
+   { content: ' & ';
+  font-style: italic;
+       color: var(--muted);
+   font-size: 80% }
+
+
 input[inputmode=decimal] { text-align: right }
 
 ol, ul { list-style: none; margin: 0; padding: 0 }
 
-.loadable-bundle
-  { margin-left: 0; margin: .4ch 0 }
-.loadable-bundle a
-  { text-decoration-skip-ink: none }
-
-ol.load-order,
-ol.load-order li
-  { display: inline }
-ol.load-order li:not(:first-child)::before
-  { content: ' & '; font-style: italic; color: var(--muted);
-    font-size: 80% }
 
 /* positioning */
 
@@ -116,13 +144,17 @@ ol.load-order li:not(:first-child)::before
 .results-length > *:first-child { flex-grow: 1 }
 
 
-a:not(.identifier):not(.wiki-link)
+a:not(.wiki-link):not(.identifier):not(.mod)
   { text-decoration-thickness: 4px;
     text-decoration-color: var(--linkline) }
 
 a.wiki-link:not(:hover),
-a.identifier:not(:hover)
+a.identifier:not(:hover),
+a.mod:not(:hover)
   { text-decoration: none }
+
+.loadable-bundle a
+  { text-decoration-skip-ink: none }
 
 
 .process .needs-recipe
@@ -132,7 +164,7 @@ a.identifier:not(:hover)
   font-size: 85% }
 
 .item > span /* vertical padding here coupled with .sprite padding */
-  { padding:   0.5ch 0.4ch; }
+  { padding: 6px 9px }
 
 .item > .time,
 .item > .condition,
@@ -261,11 +293,18 @@ a.identifier:not(:hover)
   { background-color: var(--produced) }
 
 
+.identifier, .mod
+  { font: 80% 'IBM Plex Mono', monospace }
+
 .identifier
-  { color: var(--muted);
-     font: 75% 'IBM Plex Mono', monospace }
+  { color: var(--muted) }
 .identifier::before { content: '{' }
 .identifier::after  { content: '}' }
+
+.mod
+  { color: var(--mod) }
+.mod::before { content: '«' }
+.mod::after  { content: '»' }
 
 
 .ctl
@@ -275,6 +314,10 @@ a.identifier:not(:hover)
      display: flex }
 
 .ctl { grid-gap: .5ch }
+
+/* messes with the surrogate hack because buttons are taller than inputs for
+ * some reason */
+.ctl button { line-height: 0 }
 
 .surrogate
   { display: none; visibility: hidden }

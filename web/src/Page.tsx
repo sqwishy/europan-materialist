@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
+import { createContext, createSignal, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
 import { A, useParams, useSearchParams, useNavigate } from '@solidjs/router'
 import { Show, For, Index } from 'solid-js/web'
 
@@ -105,6 +105,26 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
 
   return (
     <>
+      <header>
+        <IntroTip />
+        <div>
+          <details class="select-bundle">
+            <summary>
+              <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} />
+            </summary>
+            <For each={Game.BUNDLES}>
+              {(bundle) => (
+                <div class="loadable-bundle">
+                  <A href={`/${bundle.name}`} end={true}>
+                    <LoadOrder loadOrder={bundle.load_order} />
+                  </A>
+                </div>
+              )}
+            </For>
+          </details>
+        </div>
+      </header>
+
       <main>
         <Show
           when={hasResource()}
@@ -128,25 +148,6 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
             \ — generated on { DATETIME_FMT.format(props.build.date) }
           </small>
         </p>
-
-        <div>
-          <details open>
-            <summary>
-              <small>
-                <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} />
-              </small>
-            </summary>
-            <For each={Game.BUNDLES}>
-              {(bundle) => (
-                <div class="loadable-bundle">
-                  <A href={`/${bundle.name}`}>
-                    <LoadOrder loadOrder={bundle.load_order} />
-                  </A>
-                </div>
-              )}
-            </For>
-          </details>
-        </div>
 
         <p>
           <small>
@@ -217,6 +218,23 @@ type Update = { "search": string }
             | { "limit": number };
 
 
+const getsValueByKey =
+  <K extends string, V>(kv: Record<K, V>) => 
+  (k: K): V => kv[k]
+  
+type GetPackageForIdentifier = (_: Game.Identifier) => string | undefined
+
+const getsPackageNameByIdentifier =
+    (identifiersByPackageName: Record<string, Game.Identifier[]>): GetPackageForIdentifier =>
+  getsValueByKey(Object.fromEntries(
+    Object
+      .entries(identifiersByPackageName)
+      .flatMap(([packageName, identifiers]) => identifiers.map(i => [i, packageName]))
+  ))
+
+export const PackageForIdentifier = createContext<GetPackageForIdentifier>((_) => undefined);
+
+
 /* result listing, and search input */
 export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string) => void }) => {
 
@@ -272,6 +290,7 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
   return (
     <>
       <Locale.Context.Provider value={[localize, toEnglish]}>
+      <PackageForIdentifier.Provider value={getsPackageNameByIdentifier(props.bundle.package_entities)}>
         <section>
 
           <For each={limitedResults().entities}>
@@ -281,10 +300,6 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
           <For each={limitedResults().processes}>
             {(p) => <Process process={p} />}
           </For>
-
-          <Show when={!getSearch().substring}>
-            <IntroTip />
-          </Show>
 
           <div class="results-length">
             <span>
@@ -305,9 +320,10 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
             </Show>
           </div>
         </section>
+      </PackageForIdentifier.Provider>
       </Locale.Context.Provider>
 
-      <hr/>
+      <div><hr/></div>
 
       <div
         class="ctl"
@@ -337,12 +353,8 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
 
 const filtersBundle =
   ({ getSearch, getLanguage } : { getSearch: () => Search, getLanguage: () => string }) =>
-  (bundle: Bundle) => {
+  (bundle: Game.Bundle) => {
     const search = getSearch();
-
-    /* temporary -- FIXME -- don't show anything unless a substring search is used */
-    if (!search.substring.length)
-      return { entities: [], processes: [] }
 
     /* don't show entities unless there is a substring search */
     /* why can't fucking typescript infer the type for `entities`
@@ -419,23 +431,30 @@ function ContextFilter(props: { search: Search, update: (_: Update) => void }) {
 }
 
 
-function Entity({ identifier, tags } : { identifier: Game.Identifier, tags: Game.Identifier[] }) {
+function Entity(props: { identifier: Game.Identifier, tags: Game.Identifier[] }) {
+  const mod = () => useContext(PackageForIdentifier)(props.identifier)
+  console.log("mod", mod())
   return (
-      <div class="entity">
-        <div class="item">
-          <span class="decoration"></span>
-          <span class="what"><LocalizedIdentifier>{ identifier }</LocalizedIdentifier></span>
-          <Sprite identifier={identifier} />
-        </div>
-        <div class="item">
-          <span class="decoration"/>
-          <span class="taglist">
-            <Index each={tags}>
-              {(tag) => <Identifier>{ tag() }</Identifier>}
-            </Index>
-          </span>
-        </div>
+    <div class="entity">
+      <div class="item">
+        <span class="decoration"></span>
+        <span class="what">
+          <LocalizedIdentifier>{ props.identifier }</LocalizedIdentifier>
+          <Show when={mod()}>
+            <A href={`?q=${mod()}`} class="mod">{mod()}</A>
+          </Show>
+        </span>
+        <Sprite identifier={props.identifier} />
       </div>
+      <div class="item">
+        <span class="decoration"/>
+        <span class="taglist">
+          <Index each={props.tags}>
+            {(tag) => <Identifier>{ tag() }</Identifier>}
+          </Index>
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -495,6 +514,8 @@ function UsesList({ uses } : { uses: (Game.WeightedRandomWithReplacement | Game.
 function Part({ part } : { part: Game.Part }) {
   const { what, amount, condition } = part;
   const [condition_min, condition_max] = condition || [null, null];
+  const mod = () => useContext(PackageForIdentifier)(what)
+  console.log("mod", mod())
 
   return (
     <div class="item part"
@@ -504,7 +525,12 @@ function Part({ part } : { part: Game.Part }) {
         <span class='amount' classList={{ 'amount-multiple': Math.abs(amount) > 1 }}>
           { amt(amount) }
         </span>
-      <span class='what'><LocalizedIdentifier>{ what }</LocalizedIdentifier></span>
+      <span class='what'>
+        <LocalizedIdentifier>{ what }</LocalizedIdentifier>
+        <Show when={mod()}>
+          <A href={`?q=${mod()}`} class="mod">{mod()}</A>
+        </Show>
+      </span>
       <Show when={condition_min || condition_max}>
         <span class='condition'>
           { pct(condition_min) } ❤️ { pct(condition_max) }

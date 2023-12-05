@@ -74,6 +74,7 @@ export type Dictionary = Record<string, string>
 export type Bundle = {
   name: string,
   load_order: Package[],
+  package_entities: Record<string, Identifier[]>,
   tags_by_identifier: Record<Identifier, Identifier[]>,
   processes: Process[],
   i18n: Record<string, Dictionary>,
@@ -815,7 +816,7 @@ def extract_Price(el, **kwargs) -> Iterator[Process | Warning]:
 @dataclass
 class ContentPackageHeader(object):
     name: str
-    corepackage: bool
+    iscorepackage: bool
     gameversion: str
     modversion: str
     steamworkshopid: str
@@ -827,7 +828,7 @@ class ContentPackage(object):
     xmlpath: Path
     element: etree._Element
     name: str
-    corepackage: bool
+    iscorepackage: bool
     gameversion: str
     modversion: str
     steamworkshopid: str
@@ -869,7 +870,7 @@ def extract_ContentPackageHeader(element) -> Iterator[ContentPackageHeader | War
 
     yield ContentPackageHeader(
         name=attrs.use("name"),
-        corepackage=attrs.use("corepackage", convert=xmlbool, default=False),
+        iscorepackage=attrs.use("corepackage", convert=xmlbool, default=False),
         gameversion=attrs.use("gameversion"),
         modversion=attrs.use("modversion", default=None),
         steamworkshopid=attrs.use("steamworkshopid", default=None),
@@ -1388,7 +1389,9 @@ def main() -> None:
         for i, bundle in enumerate(bundles):
             logtime(f"writing {bundle}")
 
-            name = mangled_filename(*(f"{p.name}-{p.version}" for p in bundle.load_order))
+            name = mangled_filename(
+                *(f"{p.name}-{p.version}" for p in bundle.load_order)
+            )
             bundle_path = (args.output / name).with_suffix(".json")
             css_path = (args.output / name).with_suffix(".css")
 
@@ -1399,6 +1402,7 @@ def main() -> None:
                 "name": name,
                 "load_order": bundle.load_order,
                 "tags_by_identifier": bundle.tags_by_identifier,
+                "package_entities": bundle.package_entities,
                 "processes": bundle.processes,
                 "i18n": bundle.i18n,
             }
@@ -1453,7 +1457,7 @@ def _rglob_for_ContentPackages(paths: list[Path]) -> Iterator[ContentPackage | W
 
 
 def _find_core_package_or_exit(packages: list[ContentPackage]) -> ContentPackage:
-    is_core, non_core = partition(packages, lambda p: p.corepackage)
+    is_core, non_core = partition(packages, lambda p: p.iscorepackage)
 
     if len(is_core) != 1:
         log_warning(
@@ -1490,10 +1494,10 @@ def _validate_load_order_or_exit(
             continue
 
         package_load_order = [package_by_name[name] for name in name_load_order]
-        if package_load_order[0].corepackage:
+        if package_load_order[0].iscorepackage:
             pass
 
-        elif any(p.corepackage for p in package_load_order):
+        elif any(p.iscorepackage for p in package_load_order):
             log_warning(
                 "corepackage found in load order but not the first item",
                 shouldbefirst=vanilla,
@@ -1659,6 +1663,7 @@ class Bundle(object):
     # should be ordered with Vanilla (or core package) at the first index
     load_order: list[BundlePackageMeta]
     tags_by_identifier: dict[Identifier, list[Identifier]]
+    package_entities: dict[str, list[Identifier]]
     processes: list[Process]
     # {language: {identifier: humantext}}
     i18n: dict[str, dict[str, str]]
@@ -1671,7 +1676,7 @@ class Bundle(object):
 FILENAME_MANGLE_PATTERN = re.compile(r"[^a-z0-9]", flags=re.IGNORECASE)
 
 
-def mangled_filename(*parts: str) -> Path:
+def mangled_filename(*parts: str) -> str:
     return "+".join(FILENAME_MANGLE_PATTERN.sub("-", p) for p in parts)[:128]
 
 
@@ -1751,12 +1756,20 @@ def build_bundle(
     for lang, dictionary in i18n.items():
         logtime(f"{len(dictionary)} in {lang}")
 
+    package_entities: dict[str, list[Identifier]] = {}
+    for preitem in preitem_by_identifier.values():
+        if not preitem.package.iscorepackage:
+            # fmt: off
+            package_entities.setdefault(preitem.package.name, []) \
+                .append(preitem.identifier)
+            # fmt: on
+
     return Bundle(
         load_order=[
             BundlePackageMeta(
                 name=package.name,
                 version=package.gameversion
-                if package.corepackage
+                if package.iscorepackage
                 else package.modversion,
                 steamworkshopid=package.steamworkshopid,
             )
@@ -1765,6 +1778,7 @@ def build_bundle(
         tags_by_identifier={
             identifier: item.tags for identifier, item in index.items() if item.tags
         },
+        package_entities=package_entities,
         processes=processes,
         i18n=i18n,
         sprites_css=sprites_css,
@@ -1781,7 +1795,7 @@ def _sprite_sheet_css(
     sprites_css = StringIO()
 
     if _CHECK_SPRITE_DUPE:
-        dupes = {}
+        dupes = {}  # type: ignore
 
     # as of python 3.8, the default max workers maxes out at 32 or something so
     # it doesn't act stupid on many-core machines
