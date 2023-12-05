@@ -45,7 +45,7 @@ body
                color: var(--text);
               margin: 0 }
 
-.item, .entity, .results-length, .ctl, .surrogate
+.loading-screen, .item, .entity, .results-length, .ctl, .surrogate
   { font-family: 'Exo 2', sans-serif }
 
 .loading-screen
@@ -65,10 +65,7 @@ section > hr,
 footer > p,
 footer > div,
 footer > hr
-  { margin: 10px; max-width: 480px; box-sizing: border-box }
-
-.surrogate
-  { display: none; visibility: hidden }
+  { margin: 10px; max-width: 500px; box-sizing: border-box }
 
 
 .muted { color: var(--muted) }
@@ -102,14 +99,16 @@ input[inputmode=decimal] { text-align: right }
 ol, ul { list-style: none; margin: 0; padding: 0 }
 
 .loadable-bundle
-  { margin-left: 1em }
+  { margin-left: 0; margin: .4ch 0 }
+.loadable-bundle a
+  { text-decoration-skip-ink: none }
 
 ol.load-order,
 ol.load-order li
   { display: inline }
 ol.load-order li:not(:first-child)::before
-  { content: '&'; font-style: italic; color: var(--muted);
-    font-size: 80%; vertical-align: bottom; padding: .3ch }
+  { content: ' & '; font-style: italic; color: var(--muted);
+    font-size: 80% }
 
 /* positioning */
 
@@ -276,6 +275,9 @@ a.identifier:not(:hover)
      display: flex }
 
 .ctl { grid-gap: .5ch }
+
+.surrogate
+  { display: none; visibility: hidden }
 
 @media (pointer: fine)
   { .ctl[data-fixed]

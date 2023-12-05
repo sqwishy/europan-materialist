@@ -52,6 +52,16 @@ const Main = () => {
 
   createEffect(() => (document.title = title()));
 
+  if (!BUNDLES.length)
+    // This shouldn't really happen?
+    // The generator script shouldn't write the bundles list unless it has at
+    // least one load order, even if it's just Vanilla.
+    return <main><div class="loading-screen">no bundles... :C</div></main>
+
+  // You would think it clever to `<For each={BUNDLES}>` to create a Route for
+  // each bundle we have, but it turns out switching between Routes like that
+  // requires the entire component to remount and it looks stupid
+
   return (
     <ErrorBoundary fallback={DumbErrorMessage}>
       <Router base={import.meta.env.BASE_URL}>

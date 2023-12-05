@@ -1,22 +1,17 @@
 import { createSignal, createEffect, createMemo, createResource, useContext, splitProps, JSX } from 'solid-js'
-import { A, useParams, useSearchParams } from '@solidjs/router'
+import { A, useParams, useSearchParams, useNavigate } from '@solidjs/router'
 import { Show, For, Index } from 'solid-js/web'
 
 import * as Locale from "./Locale"
 import * as Filters from "./Filters"
 import * as Game from '../assets/bundles'
 
-export async function fetchBundle(url: string): Promise<Game.Bundle> {
-  const res = await fetch(url)
-  if (!res.ok)
-    throw new Error(res.statusText)
-  return await res.json();
-}
-
 const WIKI_BASE_URL = `https://barotraumagame.com/wiki/`;
 const WORKSHOP_BASE_URL = `https://steamcommunity.com/sharedfiles/filedetails/?id=`;
 const TITLE_DEFAULT = /* this goofs up with hot code reloading lulz */ document.title;
 const DATETIME_FMT = Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
+const BUNDLES_BY_NAME = Object.fromEntries(Game.BUNDLES.map((bundle) => [bundle.name, bundle]))
+const [DEFAULT_BUNDLE] = Game.BUNDLES;
 
 
 const amt = (f: number) => f < -1
@@ -24,12 +19,34 @@ const amt = (f: number) => f < -1
                          : f > 1
                          ? f
                          : '';
+
 const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
+
 const unreachable = (n: never): never => n;
+
 // const dbg = v => console.log(v) || v;
 
+const looksupLoadableBundleFromBundleParam =
+  ({ bundleParam, navigate }: { bundleParam: () => string, navigate: (_: string) => void }) =>
+  () => {
+    let bundle, param;
+    if (param = bundleParam())
+      if (bundle = BUNDLES_BY_NAME[param])
+        return bundle
+      else
+        navigate("/")
+    return DEFAULT_BUNDLE
+  }
+
+async function fetchBundle({ url }: Game.LoadableBundle): Promise<Game.Bundle> {
+  const res = await fetch(url)
+  if (!res.ok)
+    throw new Error(res.statusText)
+  return await res.json();
+}
 
 type Dictionary = Record<string, string>;
+
 type SearchContext = null | "only-consumed" | "only-produced";
 
 const cycleContext =
@@ -78,44 +95,24 @@ const resultsLength = (r: Results) => r.entities.length + r.processes.length
 export type Build = { hash?: string, date: Date }
 
 
-// export const Page = (props: { setTitle: (_: string) => void, build: Build }) => {
-//   const bundles = /* @once */ Game.BUNDLES;
-//   return (
-//     <>
-//     <ol class='packages'>
-//       <For each={Game.BUNDLES}>
-//         {(bundle) => 
-//           <li>
-//             <A class="bundle-select" href="?">
-//               <ol class='load-order'>
-//                 <Index each={bundle.load_order}>
-//                   {(item) => <li>{ item().name } <span class="identifier">{ item().version }</span></li>}
-//                 </Index>
-//               </ol>
-//             </A>
-//           </li>
-//          }
-//       </For>
-//     </ol>
-//   </>
-//   )
-// }
-
 export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
-  const [defaultBundle] = Game.BUNDLES;
-  const bundleUrl = defaultBundle.bundle;
-  const [bundle] = createResource(() => fetchBundle(bundleUrl))
+  const navigate = useNavigate();
+  const params = useParams();
+  const bundleParam = () => params.bundle;
+  const getLoadableBundle = createMemo(looksupLoadableBundleFromBundleParam({ bundleParam, navigate }))
+  const [bundle] = createResource(getLoadableBundle, fetchBundle)
   const hasResource = createMemo(() => !bundle.loading && !bundle.error && bundle());
 
-  const params = useParams();
-  console.log({ ...params })
-
   return (
-    <Show when={hasResource()} keyed fallback={<Loading url={bundleUrl} resource={bundle} />}>
+    <Show
+      when={hasResource()}
+      keyed
+      fallback={<Loading url={getLoadableBundle().url} resource={bundle} />}
+    >
       {(bundle) =>
         <>
           <main>
-            <Content bundle={bundle} setTitle={self.setTitle} />
+            <ListAndSearch bundle={bundle} setTitle={self.setTitle} />
           </main>
 
           <footer>
@@ -133,22 +130,22 @@ export const Page = (self: { setTitle: (_: string) => void, build: Build }) => {
             </p>
 
             <div>
-              <small>
-                <details open>
-                  <summary>
-                    <LoadOrder loadOrder={defaultBundle.load_order} />
-                  </summary>
-                  <For each={Game.BUNDLES}>
-                    {(bundle) => (
-                      <div class="loadable-bundle">
-                        <A href={`/${bundle.name}`}>
-                          <LoadOrder loadOrder={bundle.load_order} />
-                        </A>
-                      </div>
-                    )}
-                  </For>
-                </details>
-              </small>
+              <details open>
+                <summary>
+                  <small>
+                    <LoadOrder loadOrder={bundle.load_order} />
+                  </small>
+                </summary>
+                <For each={Game.BUNDLES}>
+                  {(bundle) => (
+                    <div class="loadable-bundle">
+                      <A href={`/${bundle.name}`}>
+                        <LoadOrder loadOrder={bundle.load_order} />
+                      </A>
+                    </div>
+                  )}
+                </For>
+              </details>
             </div>
 
             <hr/>
@@ -226,8 +223,8 @@ type Update = { "search": string }
             | { "limit": number };
 
 
-/* language select, result listing, and search input */
-export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => void }) => {
+/* result listing, and search input */
+export const ListAndSearch = (self: { bundle: Game.Bundle, setTitle: (_: string) => void }) => {
 
   /* fix search bar while mouse is over it to keep it from jumping around  */
   const [getFixedSearch, setFixedSearch] = createSignal<null | number>(null)
@@ -280,9 +277,6 @@ export const Content = (self: { bundle: Game.Bundle, setTitle: (_: string) => vo
 
   return (
     <>
-      {/* language select */}
-      {/* <SelectLanguage language={getLanguage()} options={self.bundle.i18n} update={update} /> */}
-
       <Locale.Context.Provider value={[localize, toEnglish]}>
         <section>
           <For each={limitedResults().entities}>
