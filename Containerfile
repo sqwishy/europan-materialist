@@ -18,9 +18,9 @@ WORKDIR /build
 
 ADD baro-data.py .
 RUN mkdir -p web/assets
-RUN python3 baro-data.py \
-            --content /Content \
-            --output web/assets/packages/
+ARG DATAGEN_ARGS="--content /Content"
+# goofy hack to properly escape/unescape multi-argument arguments???
+RUN echo -n "${DATAGEN_ARGS}" | xargs python3 baro-data.py --output web/assets/bundles/
 
 
 # install web stuff

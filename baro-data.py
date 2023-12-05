@@ -1324,7 +1324,7 @@ def main() -> None:
     # fmt: off
     parser = ArgumentParser()
     parser.add_argument("--package", nargs="*", action="append")
-    parser.add_argument("--content", nargs="+", type=Path, help="path to barotrauma Content or workshop directory containing filelist.xml")
+    parser.add_argument("--content", nargs="+", type=Path, required=True, help="path to barotrauma Content or workshop directory containing filelist.xml")
     parser.add_argument("--output", nargs='?', type=Path, help="path to write package css and json files")
     # fmt: on
 
