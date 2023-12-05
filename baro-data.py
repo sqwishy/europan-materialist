@@ -1760,7 +1760,7 @@ def build_bundle(
     for preitem in preitem_by_identifier.values():
         if not preitem.package.iscorepackage:
             # fmt: off
-            package_entities.setdefault(preitem.package.name, []) \
+            package_entities.setdefault(preitem.package.name.lower(), []) \
                 .append(preitem.identifier)
             # fmt: on
 

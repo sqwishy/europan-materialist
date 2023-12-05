@@ -219,9 +219,9 @@ type Update = { "search": string }
 
 
 const getsValueByKey =
-  <K extends string, V>(kv: Record<K, V>) => 
+  <K extends string, V>(kv: Record<K, V>) =>
   (k: K): V => kv[k]
-  
+
 type GetPackageForIdentifier = (_: Game.Identifier) => string | undefined
 
 const getsPackageNameByIdentifier =
@@ -232,6 +232,7 @@ const getsPackageNameByIdentifier =
       .flatMap(([packageName, identifiers]) => identifiers.map(i => [i, packageName]))
   ))
 
+/* I hate this -- TODO XXX FIXME */
 export const PackageForIdentifier = createContext<GetPackageForIdentifier>((_) => undefined);
 
 
@@ -335,7 +336,7 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
         <SearchFilter search={getSearch()} update={update} />
         <ContextFilter search={getSearch()} update={update} />
         <button title="up" onclick={() => window.scrollTo(0, 0)}>⬆️</button>
-        <button title="down" onclick={() => window.scrollTo(0, 0)}>⬇️</button>
+        <button title="down" onclick={() => document.querySelector('footer').scrollIntoView()}>⬇️</button>
       </div>
 
       {/* funny hack to prevent page height change when search above switches from sticky to fixed  */}
@@ -375,8 +376,14 @@ const filtersBundle =
       const part = Filters.part({ amount, identifier })
       const usedIn = Filters.usedInProcess({ part })
 
+      /* requires an exact match? */
+      const identifierInMod =
+        search.substring in bundle.package_entities
+          ? (i: Game.Identifier) => bundle.package_entities[search.substring].includes(i) || identifier(i)
+          : (i: Game.Identifier) => identifier(i);
+
       entities = Object.entries(bundle.tags_by_identifier)
-                       .filter(Filters.entities({ amount, identifier }))
+                       .filter(Filters.entities({ amount, identifier: identifierInMod }))
       processes = processes.filter(Filters.processes({ amount, identifier, usedIn }))
     }
 
@@ -433,7 +440,7 @@ function ContextFilter(props: { search: Search, update: (_: Update) => void }) {
 
 function Entity(props: { identifier: Game.Identifier, tags: Game.Identifier[] }) {
   const mod = () => useContext(PackageForIdentifier)(props.identifier)
-  console.log("mod", mod())
+
   return (
     <div class="entity">
       <div class="item">
@@ -515,7 +522,6 @@ function Part({ part } : { part: Game.Part }) {
   const { what, amount, condition } = part;
   const [condition_min, condition_max] = condition || [null, null];
   const mod = () => useContext(PackageForIdentifier)(what)
-  console.log("mod", mod())
 
   return (
     <div class="item part"

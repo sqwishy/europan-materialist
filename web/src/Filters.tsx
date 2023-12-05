@@ -6,6 +6,7 @@ type PartFilter = (_: Game.Part) => boolean
 type UsedInFilter = (_: Game.Part | Game.WeightedRandomWithReplacement) => boolean
 type IdentifierFilter = (_: Game.Identifier) => boolean
 
+
 export const amount =
   (context : "only-consumed" | "only-produced"): AmountedFilter =>
       context === "only-consumed"
