@@ -49,6 +49,8 @@ export const processes =
 export const entities =
   ({ amount, identifier }: { identifier: IdentifierFilter, amount?: AmountedFilter }) =>
     !amount
-  ? ([ i, tags ]: [ Game.Identifier, Game.Identifier[] ]) =>
-       identifier(i) || tags.some(identifier)
+  ? (entity: Game.Entity) =>
+       identifier(entity.identifier)
+    || entity.tags.some(identifier)
+    || (entity.package && identifier(entity.package))
   : (_: any) => false

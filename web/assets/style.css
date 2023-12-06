@@ -109,10 +109,11 @@ details.select-bundle > .loadable-bundle a
   { padding-right: 3ch; display: block }
 details.select-bundle > summary
   { background: no-repeat center right 6px / 2ch var(--chevron-open) }
+@media (pointer: fine) {
 details.select-bundle > .loadable-bundle a:hover
-  { background: no-repeat center right 6px / 2ch var(--chevron-hover) }
+  { background: no-repeat center right 8px / 2ch var(--chevron-hover) } }
 details.select-bundle > .loadable-bundle a.active:not(:hover)
-  { background: no-repeat center right 6px / 2ch var(--chevron-active) ; }
+  { background: no-repeat center right 8px / 2ch var(--chevron-active) }
 
 
 details.select-bundle

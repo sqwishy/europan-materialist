@@ -62,7 +62,7 @@ type Search = {
 }
 
 type Results = {
-  entities: [/* identifier */ Game.Identifier, /* tags */ Game.Identifier[]][],
+  entities: Game.Entity[],
   processes: Game.Process[],
 };
 
@@ -225,12 +225,9 @@ const getsValueByKey =
 type GetPackageForIdentifier = (_: Game.Identifier) => string | undefined
 
 const getsPackageNameByIdentifier =
-    (identifiersByPackageName: Record<string, Game.Identifier[]>): GetPackageForIdentifier =>
-  getsValueByKey(Object.fromEntries(
-    Object
-      .entries(identifiersByPackageName)
-      .flatMap(([packageName, identifiers]) => identifiers.map(i => [i, packageName]))
-  ))
+  (entities: Game.Entity[]): GetPackageForIdentifier =>
+  getsValueByKey(Object.fromEntries(entities.filter((e) => e.package)
+                                             .map((e) => [e.identifier, e.package])))
 
 /* I hate this -- TODO XXX FIXME */
 export const PackageForIdentifier = createContext<GetPackageForIdentifier>((_) => undefined);
@@ -268,10 +265,9 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
   const limitedResults = createMemo((): Results => limitsByLimit(filteredResults()))
 
   const ctlcomplete = createMemo(() => {
-    const tagsByIdentifier = props.bundle.tags_by_identifier;
-    const allTags = Object.values(tagsByIdentifier).flat();
-    const allIdentifiers = allTags.concat(Object.keys(tagsByIdentifier))
-    return [...new Set(allIdentifiers)]
+    const identifiers = Object.values(props.bundle.entities).map(e => e.identifier)
+    const tags = Object.values(props.bundle.entities).flatMap(e => e.tags);
+    return [...new Set(identifiers.concat(tags))]
   })
 
   const update = (update: Update) => {
@@ -291,11 +287,11 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
   return (
     <>
       <Locale.Context.Provider value={[localize, toEnglish]}>
-      <PackageForIdentifier.Provider value={getsPackageNameByIdentifier(props.bundle.package_entities)}>
+      <PackageForIdentifier.Provider value={getsPackageNameByIdentifier(props.bundle.entities)}>
         <section>
 
           <For each={limitedResults().entities}>
-            {([identifier, tags]) => <Entity identifier={identifier} tags={tags} />}
+            {(entity) => <Entity entity={entity} />}
           </For>
 
           <For each={limitedResults().processes}>
@@ -336,7 +332,7 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
         <SearchFilter search={getSearch()} update={update} />
         <ContextFilter search={getSearch()} update={update} />
         <button title="up" onclick={() => window.scrollTo(0, 0)}>⬆️</button>
-        <button title="down" onclick={() => document.querySelector('footer').scrollIntoView()}>⬇️</button>
+        <button title="down" onclick={() => document.querySelector('footer')!.scrollIntoView()}>⬇️</button>
       </div>
 
       {/* funny hack to prevent page height change when search above switches from sticky to fixed  */}
@@ -358,9 +354,7 @@ const filtersBundle =
     const search = getSearch();
 
     /* don't show entities unless there is a substring search */
-    /* why can't fucking typescript infer the type for `entities`
-    * when this return type is explicit ??? */
-    let entities: [string, string[]][] = [];
+    let entities = bundle.entities;
     let processes = bundle.processes
 
     if (search.substring.length) {
@@ -376,14 +370,7 @@ const filtersBundle =
       const part = Filters.part({ amount, identifier })
       const usedIn = Filters.usedInProcess({ part })
 
-      /* requires an exact match? */
-      const identifierInMod =
-        search.substring in bundle.package_entities
-          ? (i: Game.Identifier) => bundle.package_entities[search.substring].includes(i) || identifier(i)
-          : (i: Game.Identifier) => identifier(i);
-
-      entities = Object.entries(bundle.tags_by_identifier)
-                       .filter(Filters.entities({ amount, identifier: identifierInMod }))
+      entities = entities.filter(Filters.entities({ amount, identifier }))
       processes = processes.filter(Filters.processes({ amount, identifier, usedIn }))
     }
 
@@ -438,25 +425,26 @@ function ContextFilter(props: { search: Search, update: (_: Update) => void }) {
 }
 
 
-function Entity(props: { identifier: Game.Identifier, tags: Game.Identifier[] }) {
-  const mod = () => useContext(PackageForIdentifier)(props.identifier)
+function Entity(props: { entity: Game.Entity }) {
+  // package is a _reserved_ word so we can't use it lulz
+  const { entity: { identifier, tags, package: mod } } = props
 
   return (
     <div class="entity">
       <div class="item">
         <span class="decoration"></span>
         <span class="what">
-          <LocalizedIdentifier>{ props.identifier }</LocalizedIdentifier>
-          <Show when={mod()}>
-            <A href={`?q=${mod()}`} class="mod">{mod()}</A>
+          <LocalizedIdentifier>{ identifier }</LocalizedIdentifier>
+          <Show when={ mod }>
+            {" "}<A href={`?q=${ mod }`} class="mod">{ mod }</A>
           </Show>
         </span>
-        <Sprite identifier={props.identifier} />
+        <Sprite identifier={ identifier } />
       </div>
       <div class="item">
         <span class="decoration"/>
         <span class="taglist">
-          <Index each={props.tags}>
+          <Index each={ tags }>
             {(tag) => <Identifier>{ tag() }</Identifier>}
           </Index>
         </span>
@@ -534,7 +522,7 @@ function Part({ part } : { part: Game.Part }) {
       <span class='what'>
         <LocalizedIdentifier>{ what }</LocalizedIdentifier>
         <Show when={mod()}>
-          <A href={`?q=${mod()}`} class="mod">{mod()}</A>
+          {" "}<A href={`?q=${mod()}`} class="mod">{mod()}</A>
         </Show>
       </span>
       <Show when={condition_min || condition_max}>
