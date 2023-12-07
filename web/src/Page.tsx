@@ -92,6 +92,16 @@ const stringToSearch =
 const resultsLength = (r: Results) => r.entities.length + r.processes.length
 
 
+const loadedResource = <T,>(resource: { loading: boolean, error: any, (): T | undefined }): T | null => {
+  let result;
+  return (   resource.loading
+          || resource.error
+          || undefined === (result = resource()))
+         ? null
+         : result
+}
+
+
 export type Build = { hash?: string, date: Date }
 
 
@@ -101,8 +111,45 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
   const bundleParam = () => params.bundle;
   const getCurrentLoadableBundle = createMemo(looksupLoadableBundleFromBundleParam({ bundleParam, navigate }))
   const [bundle] = createResource(getCurrentLoadableBundle, fetchBundle)
-  const hasResource = createMemo(() => !bundle.loading && !bundle.error && bundle());
+  const loadedBundle = createMemo((): Game.Bundle | null => loadedResource(bundle))
+
   const [getShowIntro, setShowIntro] = createSignal(true)
+
+  const [getLanguage, setLanguage] = createSignal('English')
+
+  const localize: Locale.ize = Locale.izes(() => loadedBundle()?.i18n[getLanguage()])
+  const toEnglish: Locale.ize = Locale.izes(() => loadedBundle()?.i18n.English)
+
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const getSearchText = () => searchParams.q?.trim() || ''
+  const setSearchText = (q: string) => setSearchParams({ q })
+
+  const getLimit = () => parseInt(searchParams.limit, 10) || 50
+  const setLimit = (limit: number) => setSearchParams({ limit })
+
+  createEffect(() => props.setTitle(  getSearchText()
+                                   ? `${getSearchText()} — ${TITLE_DEFAULT}`
+                                   : TITLE_DEFAULT))
+
+  const getSearch = createMemo((): Search => stringToSearch(getSearchText()))
+
+  const update = (update: Update) => {
+    if ("search" in update)
+      setSearchText(searchToString({ ...getSearch(), substring: update.search.trim() }))
+
+    else if ("context" in update)
+      setSearchText(searchToString({ ...getSearch(), context: update.context }))
+
+    else if ("limit" in update)
+      setLimit(update.limit)
+
+    else if ("lang" in update)
+      setLanguage(update.lang)
+
+    else
+      unreachable(update)
+  };
 
   return (
     <>
@@ -129,16 +176,28 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
             </Show>
           </details>
         </div>
+
+        <Show when={loadedBundle()}>
+          {(bundle) => <div><SelectLanguage language={getLanguage()} options={bundle().i18n} update={update} /></div>}
+        </Show>
       </header>
 
       <main>
-        <Show
-          when={hasResource()}
-          keyed
-          fallback={<Loading url={getCurrentLoadableBundle().url} resource={bundle} />}
-        >
-          {(bundle) =><ListAndSearch bundle={bundle} setTitle={props.setTitle} />}
-        </Show>
+        <Locale.Context.Provider value={[localize, toEnglish]}>
+          <Show
+            when={loadedBundle()}
+            fallback={<Loading url={getCurrentLoadableBundle().url} resource={bundle} />}
+          >
+            {(bundle) => (
+              <ListAndSearch
+                bundle={bundle()}
+                getSearch={getSearch}
+                getLanguage={getLanguage}
+                getLimit={getLimit}
+                update={update} />
+            )}
+          </Show>
+        </Locale.Context.Provider>
       </main>
 
       <footer>
@@ -225,10 +284,28 @@ export const Loading = (props: { url: string, resource: any }) => {
   )
 }
 
+const SelectLanguage = (props: { language: string, options: Record<string, Dictionary>, update: (_: Update) => void }) => {
+  return (
+    <select onchange={(e) => props.update({ "lang": e.currentTarget.value })} >
+       <option value="">[no localization]</option>
+       <For each={Object.entries(props.options).sort()}>
+         {([language, dictionary]) => (
+           <option
+             value={language}
+             selected={props.language==language}
+           >
+             {dictionary[language] || language}
+           </option>
+         )}
+       </For>
+     </select>
+  )
+}
 
 type Update = { "search": string }
             | { "context": SearchContext }
-            | { "limit": number };
+            | { "limit": number }
+            | { "lang": string };
 
 
 const getsValueByKey =
@@ -247,29 +324,19 @@ export const PackageForIdentifier = createContext<GetPackageForIdentifier>((_) =
 
 
 /* result listing, and search input */
-export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string) => void }) => {
+export const ListAndSearch = (
+  props: {
+    bundle: Game.Bundle,
+    getSearch: () => Search,
+    getLanguage: () => string,
+    getLimit: () => number,
+    update: (_: Update) => void
+  }
+) => {
+  const { getSearch, getLanguage, getLimit, update } = props /* todo does this break reactivity? */
 
   /* fix search bar while mouse is over it to keep it from jumping around  */
   const [getFixedSearch, setFixedSearch] = createSignal<null | number>(null)
-
-  const [getLanguage] = createSignal('English')
-
-  const localize: Locale.ize = Locale.izes(() => props.bundle.i18n[getLanguage()])
-  const toEnglish: Locale.ize = Locale.izes(() => props.bundle.i18n.English)
-
-  const [searchParams, setSearchParams] = useSearchParams()
-
-  const getSearchText = () => searchParams.q?.trim() || ''
-  const setSearchText = (q: string) => setSearchParams({ q })
-
-  const getLimit = () => parseInt(searchParams.limit, 10) || 50
-  const setLimit = (limit: number) => setSearchParams({ limit })
-
-  createEffect(() => props.setTitle(  getSearchText()
-                                   ? `${getSearchText()} — ${TITLE_DEFAULT}`
-                                   : TITLE_DEFAULT))
-
-  const getSearch = createMemo((): Search => stringToSearch(getSearchText()))
 
   const filtersBySearch = filtersBundle({ getSearch, getLanguage });
   const filteredResults = createMemo((): Results => filtersBySearch(props.bundle));
@@ -283,23 +350,8 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
     return [...new Set(identifiers.concat(tags))]
   })
 
-  const update = (update: Update) => {
-    if ("search" in update)
-      setSearchText(searchToString({ ...getSearch(), substring: update.search.trim() }))
-
-    else if ("context" in update)
-      setSearchText(searchToString({ ...getSearch(), context: update.context }))
-
-    else if ("limit" in update)
-      setLimit(update.limit)
-
-    else
-      unreachable(update)
-  };
-
   return (
     <>
-      <Locale.Context.Provider value={[localize, toEnglish]}>
       <PackageForIdentifier.Provider value={getsPackageNameByIdentifier(props.bundle.entities)}>
         <section>
 
@@ -331,7 +383,6 @@ export const ListAndSearch = (props: { bundle: Game.Bundle, setTitle: (_: string
           </div>
         </section>
       </PackageForIdentifier.Provider>
-      </Locale.Context.Provider>
 
       <div><hr/></div>
 
