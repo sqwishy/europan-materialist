@@ -64,7 +64,7 @@ const Main = () => {
 
   return (
     <ErrorBoundary fallback={DumbErrorMessage}>
-      <Router base={import.meta.env.BASE_URL}>
+      <Router base={import.meta.env.BASE_URL} explicitLinks={true}>
         <Routes>
           <Route
             path={["/", "/:bundle"]}

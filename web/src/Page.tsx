@@ -102,25 +102,31 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
   const getCurrentLoadableBundle = createMemo(looksupLoadableBundleFromBundleParam({ bundleParam, navigate }))
   const [bundle] = createResource(getCurrentLoadableBundle, fetchBundle)
   const hasResource = createMemo(() => !bundle.loading && !bundle.error && bundle());
+  const [getShowIntro, setShowIntro] = createSignal(true)
 
   return (
     <>
       <header>
-        <IntroTip />
+        <Show when={getShowIntro()}>
+          <IntroTip dismiss={() => setShowIntro(false)} />
+        </Show>
+
         <div>
           <details class="select-bundle">
             <summary>
-              <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} />
+              <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} links={true} />
             </summary>
+            <Show when={Game.BUNDLES.length > 0}>
             <For each={Game.BUNDLES}>
               {(bundle) => (
                 <div class="loadable-bundle">
-                  <A href={`/${bundle.name}`} end={true}>
+                  <A href={`/${bundle.name}`} classList={{"active": bundle === getCurrentLoadableBundle()}}>
                     <LoadOrder loadOrder={bundle.load_order} />
                   </A>
                 </div>
               )}
             </For>
+            </Show>
           </details>
         </div>
       </header>
@@ -151,6 +157,12 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
 
         <p>
           <small>
+            <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} links={true} />
+          </small>
+        </p>
+
+        <p>
+          <small>
             This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>.
             It is unaffiliated with <a
             href="https://undertowgames.com/">Undertow Games</a> or any
@@ -163,9 +175,10 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
   )
 }
 
-const IntroTip = () => (
+const IntroTip = (props: { dismiss: () => void }) => (
   <>
     <p>
+      <button class="dismiss linkish muted smol" onclick={() => props.dismiss()}>dismiss</button>
       This is a directory of Barotrauma crafting recipes.
     </p>
     <p>
@@ -175,11 +188,11 @@ const IntroTip = () => (
 );
 
 
-const LoadOrder = (props: { loadOrder: Game.Package[] }) => {
+const LoadOrder = (props: { loadOrder: Game.Package[], links?: boolean }) => {
   return (
     <ol class='load-order'>
       <Index each={props.loadOrder}>
-        {(item) => <LoadOrderListItem package={item()} />}
+        {(item) => <LoadOrderListItem package={item()} link={props.links} />}
       </Index>
     </ol>
   )
