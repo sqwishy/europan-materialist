@@ -105,7 +105,14 @@ const loadedResource = <T,>(resource: { loading: boolean, error: any, (): T | un
 export type Build = { hash?: string, date: Date }
 
 
-export const Page = (props: { setTitle: (_: string) => void, build: Build }) => {
+export const Page = (
+  props:
+    {
+      setTitle: (_: string) => void,
+      setSpritesHref: (_: string | undefined) => void,
+      build: Build,
+    }
+) => {
   const navigate = useNavigate();
   const params = useParams();
   const bundleParam = () => params.bundle;
@@ -131,6 +138,8 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
   createEffect(() => props.setTitle(  getSearchText()
                                    ? `${getSearchText()} — ${TITLE_DEFAULT}`
                                    : TITLE_DEFAULT))
+
+  createEffect(() => props.setSpritesHref(getCurrentLoadableBundle().sprites))
 
   const getSearch = createMemo((): Search => stringToSearch(getSearchText()))
 
@@ -159,22 +168,25 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
         </Show>
 
         <div>
-          <details class="select-bundle">
-            <summary>
-              <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} links={true} />
-            </summary>
-            <Show when={Game.BUNDLES.length > 0}>
-            <For each={Game.BUNDLES}>
-              {(bundle) => (
-                <div class="loadable-bundle">
-                  <A href={`/${bundle.name}`} classList={{"active": bundle === getCurrentLoadableBundle()}}>
-                    <LoadOrder loadOrder={bundle.load_order} />
-                  </A>
-                </div>
-              )}
-            </For>
-            </Show>
-          </details>
+          <Show
+             when={Game.BUNDLES.length > 1}
+             fallback={<LoadOrder loadOrder={getCurrentLoadableBundle().load_order} links={true} />}
+          >
+            <details class="select-bundle">
+              <summary>
+                <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} links={true} />
+              </summary>
+              <For each={Game.BUNDLES}>
+                {(bundle) => (
+                  <div class="loadable-bundle">
+                    <A href={`/${bundle.name}`} classList={{"active": bundle === getCurrentLoadableBundle()}}>
+                      <LoadOrder loadOrder={bundle.load_order} />
+                    </A>
+                  </div>
+                )}
+              </For>
+            </details>
+          </Show>
         </div>
 
         <Show when={loadedBundle()}>
@@ -211,12 +223,6 @@ export const Page = (props: { setTitle: (_: string) => void, build: Build }) => 
               <span class="identifier">{ props.build.hash }</span>
             </Show>
             \ — generated on { DATETIME_FMT.format(props.build.date) }
-          </small>
-        </p>
-
-        <p>
-          <small>
-            <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} links={true} />
           </small>
         </p>
 

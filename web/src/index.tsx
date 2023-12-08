@@ -1,6 +1,8 @@
-import { createSignal, createEffect } from 'solid-js';
-import { render, ErrorBoundary } from 'solid-js/web';
-import { Router, Routes, Route } from '@solidjs/router'
+/* @refresh reload */
+
+import { createSignal, createEffect, createMemo } from 'solid-js';
+import { render, ErrorBoundary, Show } from 'solid-js/web';
+import { Router, Routes, Route, Navigate } from '@solidjs/router'
 import { Page } from './Page';
 import { BUNDLES } from '../assets/bundles'
 
@@ -31,13 +33,13 @@ import { BUNDLES } from '../assets/bundles'
  * as a data uri ... like data:application/octet-stream ... think about
  * that for a second ... preloading a data uri ... what the fuck people */
 
-{
-  const [defaultBundle] = BUNDLES
-  const link = document.createElement('link')
-  link.rel = 'stylesheet';
-  link.href = defaultBundle.sprites;
-  document.head.append(link)
-}
+// {
+//   const [defaultBundle] = BUNDLES
+//   const link = document.createElement('link')
+//   link.rel = 'stylesheet';
+//   link.href = defaultBundle.sprites;
+//   document.head.append(link)
+// }
 
 
 const BUILD = {
@@ -47,10 +49,18 @@ const BUILD = {
 
 const DumbErrorMessage = <footer><p><b>oops</b> something hecked up! maybe reload the page and hope it doesn't happen again?</p></footer>
 
-const Main = () => {
+const SpriteSheet = (props: { href?: string }) => (
+  <Show when={props.href}>
+    <link rel="stylesheet" href={props.href} />
+  </Show>
+)
+
+const Main = (props: { setSpritesHref: (_: string) => void }) => {
   const [title, setTitle] = createSignal(document.title);
 
   createEffect(() => (document.title = title()));
+
+  // props.setSpritesHref("hi");
 
   if (!BUNDLES.length)
     // This shouldn't really happen?
@@ -68,13 +78,23 @@ const Main = () => {
         <Routes>
           <Route
             path={["/", "/:bundle"]}
-            element={<Page setTitle={setTitle} build={/*@once*/ BUILD} />}
+            element={
+              <Page
+               setTitle={setTitle}
+               setSpritesHref={props.setSpritesHref}
+               build={/*@once*/ BUILD}
+             />
+            }
           />
-          <Route path="**" element={<p>FIXME</p>} />
+          <Route path="**" element={<Navigate href="/" />} />
         </Routes>
       </Router>
     </ErrorBoundary>
   )
 }
 
-render(() => <Main/>, document.body!);
+const [getSpritesHref, setSpritesHref] = createSignal<string>();
+
+render(() => <SpriteSheet href={getSpritesHref()} />, document.head!);
+
+render(() => <Main setSpritesHref={setSpritesHref}/>, document.body!);
