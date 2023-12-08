@@ -424,7 +424,7 @@ const filtersBundle =
     const search = getSearch();
 
     /* don't show entities unless there is a substring search */
-    let entities = bundle.entities;
+    let entities: Game.Entity[] = [];
     let processes = bundle.processes
 
     if (search.substring.length) {
@@ -440,7 +440,7 @@ const filtersBundle =
       const part = Filters.part({ amount, identifier })
       const usedIn = Filters.usedInProcess({ part })
 
-      entities = entities.filter(Filters.entities({ amount, identifier }))
+      entities = bundle.entities.filter(Filters.entities({ amount, identifier }))
       processes = processes.filter(Filters.processes({ amount, identifier, usedIn }))
     }
 
