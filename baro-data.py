@@ -1284,8 +1284,8 @@ def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
 
 
 __SPRITE_CACHE_LOCK = Lock()
-__SPRITE_CACHE: dict[Path, "PIL.Image.Image"] = {}
 __SPRITE_CACHE_IMAGE_LOCKS: dict[Path, Lock] = {}
+__SPRITE_CACHE: dict[Path, "PIL.Image.Image"] = {}
 
 
 def load_sprite_at_path(
@@ -1299,7 +1299,6 @@ def load_sprite_at_path(
             image_lock = __SPRITE_CACHE_IMAGE_LOCKS[path] = Lock()
 
     with image_lock:
-        # A BIT FUCKY?
         image = __SPRITE_CACHE.get(path)
         if image is None:
             image = __SPRITE_CACHE[path] = Image.open(path)
@@ -1307,8 +1306,8 @@ def load_sprite_at_path(
 
     image = image.crop(ltwh_to_ltbr(ltwh))  # crop to sprite in sheet
     image = image.crop(image.getbbox())  # crop transparency
-    # copy done earlier because threading
-    # image = image.copy()  # thumbnail() is in-place returns None, copy first
+    # thumbnail() is in-place and returns None, that's fine because we copied
+    # from the lock above
     image.thumbnail((48, 48))
     return image
 
@@ -1322,7 +1321,7 @@ def to_base64(image: "PIL.Image.Image", format="webp") -> str:
 def load_xmls(paths: list[Path]) -> Iterator[tuple[Path, etree._Document]]:
     for path in paths:
         try:
-            with path.open() as file:
+            with path.open('rb') as file:
                 doc = etree.parse(file)
 
         except (OSError, etree.Error) as err:
@@ -1378,7 +1377,8 @@ def main() -> None:
 
         _texts = alltexts[package.name] = []
         _texts.extend(_iter_content_package_infotexts(package, texts))
-        logtime(f"{package.name} » {len(_texts)} texts")
+        _words_count = sum(len(i.dictionary) for i in _texts)
+        logtime(f"{package.name} » {len(_texts)} texts » {_words_count} words")
 
     # build bundles for output
 
@@ -1628,7 +1628,7 @@ def _iter_infotext_items(element: etree._Element) -> Iterator[tuple[str, str]]:
             # fmt: off
             msg = (   drop_prefix(tag, "entityname.")
                    or drop_prefix(tag, "npctitle.") # merchants
-                   or drop_prefix(tag, 'fabricationdescription.')) # munition_core etc
+                   or drop_prefix(tag, "fabricationdescription.")) # munition_core etc
             # fmt: on
             yield msg, child.text
 
