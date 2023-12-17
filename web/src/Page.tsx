@@ -351,9 +351,10 @@ export const ListAndSearch = (
   const limitedResults = createMemo((): Results => limitsByLimit(filteredResults()))
 
   const ctlcomplete = createMemo(() => {
-    const identifiers = Object.values(props.bundle.entities).map(e => e.identifier)
-    const tags = Object.values(props.bundle.entities).flatMap(e => e.tags);
-    return [...new Set(identifiers.concat(tags))]
+    const identifiers = Object.values(props.bundle.entities)
+                              .flatMap(e => [e.identifier, e.package].concat(e.tags))
+                              .filter(Boolean)
+    return [...new Set(identifiers)]
   })
 
   return (
