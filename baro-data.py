@@ -1,3 +1,7 @@
+"""
+python 3.11+ script; depends on Pillow and lxml.
+"""
+
 import json
 import os
 import re
@@ -1556,7 +1560,7 @@ def _iter_content_package_preitems(
     package: ContentPackage, item_paths: list[Path]
 ) -> Iterator[PreItem]:
     for xmlpath, doc in load_xmls(item_paths):
-        for item in extract_ItemHeader(doc):
+        for item in extract_ItemHeader(doc.getroot()):
 
             # hack when loading sprites to know what context a %ModDir% was
             # used in; this must survive apply_variant and not break it
@@ -1640,15 +1644,18 @@ class ItemHeader(object):
     variant_of: Identifier | None
 
 
-def extract_ItemHeader(doc) -> Iterator[ItemHeader]:
-    root = doc.getroot()
-    element_tag = root.tag.lower()
+def extract_ItemHeader(element: etree._Element) -> Iterator[ItemHeader]:
+    element_tag = element.tag.lower()
 
     if element_tag == "item":
-        yield from _extract_element_ItemHeader([root])
+        yield from _extract_element_ItemHeader([element])
 
     elif element_tag == "items":
-        yield from _extract_element_ItemHeader(root)
+        yield from _extract_element_ItemHeader(element)
+
+    elif element_tag == "override":
+        for child in skip_comments(element):
+            yield from _extract_element_ItemHeader(child)
 
 
 def _extract_element_ItemHeader(items) -> Iterator[ItemHeader]:
