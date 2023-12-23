@@ -18,6 +18,7 @@ from lxml import etree
 from operator import ior
 from pathlib import Path
 from functools import partial, reduce
+from threading import Lock
 from typing import (
     Union,
     NewType,
@@ -1202,9 +1203,6 @@ def element_is_non_empty(el: etree._Element) -> bool:
     return bool(el.attrib or len(el))
 
 
-from threading import Lock
-
-
 def resolve_path_with_relative_fallback(
     path: str,
     *,
@@ -1213,16 +1211,14 @@ def resolve_path_with_relative_fallback(
     packages: list[ContentPackage],
     fallback: Path,
 ) -> Path:
-    _resolve = partial(
-        resolve_path, vanilla=vanilla, current=current, packages=packages
-    )
+    _resolve = partial(resolve_path, current=current, packages=packages)
     try:
-        return _resolve(path)
+        return _resolve(path, vanilla=vanilla)
     except FileNotFoundError:
         # if relative_to raises ValueError because the paths aren't
         # relative then that's probably a good thing
         qualified = fallback.relative_to(current.path)
-        return _resolve(qualified / path)
+        return _resolve(qualified / path, vanilla=None)
 
 
 # {(package path, suffix): {lowercase path: filesystem path}}
@@ -1232,7 +1228,7 @@ __PATH_CACHE: dict[tuple[Path, str], dict[str, Path]] = {}
 def resolve_path(
     path: str,
     *,
-    vanilla: ContentPackage,
+    vanilla: ContentPackage | None,
     current: ContentPackage,
     packages: list[ContentPackage],
 ) -> Path:
@@ -1245,6 +1241,9 @@ def resolve_path(
     should be case insensitive, should not resolve outside of `root`, should
     return a path that is a file that exists
 
+    the vanilla package can be None if the current package should be used for
+    paths that are not prefixed with %ModDir%
+
     also, this sort of expects you to pass it Barotrauma's Content directory
     for the Vanilla package, but Vanilla resource paths are prefixed with
     "content/" so those prefixes are dropped in that case
@@ -1254,23 +1253,27 @@ def resolve_path(
     # FIXME not cross platform ...
     path = str(path).replace("\\", "/")
 
-    if is_relative := is_mod_relative_path(path):
-        relative_mod_id, relative_path = is_relative
+    if prefix := mod_prefix(path):
+        mod_id, relative_path = prefix
 
-        if relative_mod_id is None and vanilla == current:
+        if mod_id is None and vanilla == current:
             raise ValueError("%ModDir% used in Vanilla??")
 
-        if relative_mod_id is None:
+        if mod_id is None:
             package_path = current.path
         else:
             for package in packages:
-                if package.steamworkshopid == relative_mod_id:
+                if package.steamworkshopid == mod_id:
                     package_path = package.path
                     break
             else:
-                raise ValueError(f"mod {relative_mod_id} not found")
+                raise ValueError(f"mod {mod_id} not found")
 
         content_path = relative_path.lower()
+
+    elif vanilla is None:
+        package_path = current.path
+        content_path = path.lower()
 
     else:
         package_path = vanilla.path
@@ -1296,7 +1299,7 @@ def resolve_path(
     return realpath
 
 
-def is_mod_relative_path(path: str) -> tuple[str | None, str] | None:
+def mod_prefix(path: str) -> tuple[str | None, str] | None:
     """
     >>> is_mod_relative_path('not/relative')
     >>> is_mod_relative_path('%ModDir%/relative')
@@ -1308,7 +1311,7 @@ def is_mod_relative_path(path: str) -> tuple[str | None, str] | None:
         name, *rest = is_named.split("%/", 1)
         if not rest:
             raise ValueError(path)
-        path, = rest
+        (path,) = rest
         return name, path
 
     elif path := drop_prefix(path, "%ModDir%/"):
@@ -1578,7 +1581,9 @@ def _resolve_content_package_paths(
     items: list[Path] = []
     texts: list[Path] = []
 
-    convert_path = partial(resolve_path, vanilla=vanilla, current=current, packages=packages)
+    convert_path = partial(
+        resolve_path, vanilla=vanilla, current=current, packages=packages
+    )
     content_paths = extract_ContentPath(current.element, convert_path)
 
     for content in log_warnings(content_paths, path=current.xmlpath):
