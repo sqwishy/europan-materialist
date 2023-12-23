@@ -68,9 +68,9 @@ export type Process = {
 }
 
 export type Entity = {
-    identifier: Identifier,
-    tags: Identifier[],
-    package?: string,
+  identifier: Identifier,
+  tags: Identifier[],
+  package?: string,
 }
 
 export type Package = {
@@ -265,7 +265,7 @@ RequiredSkill: TypeAlias = dict[Identifier, float]
 IDENTIFIER_PATTERN = re.compile(r"[a-z0-9\._-]+", flags=re.IGNORECASE)
 
 
-def coerce_to_identifier(value: str) -> Identifier:
+def coerce_to_identifier(value: str) -> str:
     """
     >>> coerce_to_identifier("Cat Mod")
     'catmod'
@@ -1210,14 +1210,17 @@ def resolve_path_with_relative_fallback(
     *,
     vanilla: ContentPackage,
     current: ContentPackage,
+    packages: list[ContentPackage],
     fallback: Path,
 ) -> Path:
-    _resolve = partial(resolve_path, vanilla=vanilla, current=current)
+    _resolve = partial(
+        resolve_path, vanilla=vanilla, current=current, packages=packages
+    )
     try:
         return _resolve(path)
     except FileNotFoundError:
-        # if this raises a value error because the given paths aren't relative
-        # to each other then that's probably a good thing
+        # if relative_to raises ValueError because the paths aren't
+        # relative then that's probably a good thing
         qualified = fallback.relative_to(current.path)
         return _resolve(qualified / path)
 
@@ -1231,6 +1234,7 @@ def resolve_path(
     *,
     vanilla: ContentPackage,
     current: ContentPackage,
+    packages: list[ContentPackage],
 ) -> Path:
     """
     given a path to a resouce in a content package, find the corresponding file
@@ -1250,10 +1254,22 @@ def resolve_path(
     # FIXME not cross platform ...
     path = str(path).replace("\\", "/")
 
-    if relative_path := is_mod_relative_path(path):
-        if vanilla == current:
-            raise Exception("%ModDir% used in Vanilla??")
-        package_path = current.path
+    if is_relative := is_mod_relative_path(path):
+        relative_mod_id, relative_path = is_relative
+
+        if relative_mod_id is None and vanilla == current:
+            raise ValueError("%ModDir% used in Vanilla??")
+
+        if relative_mod_id is None:
+            package_path = current.path
+        else:
+            for package in packages:
+                if package.steamworkshopid == relative_mod_id:
+                    package_path = package.path
+                    break
+            else:
+                raise ValueError(f"mod {relative_mod_id} not found")
+
         content_path = relative_path.lower()
 
     else:
@@ -1280,10 +1296,26 @@ def resolve_path(
     return realpath
 
 
-def is_mod_relative_path(path: str) -> str | None:
-    if path.startswith("%ModDir:"):  # for specifying a mod by name
-        raise NotImplementedError(path)
-    return drop_prefix(path, "%ModDir%/")
+def is_mod_relative_path(path: str) -> tuple[str | None, str] | None:
+    """
+    >>> is_mod_relative_path('not/relative')
+    >>> is_mod_relative_path('%ModDir%/relative')
+    (None, 'relative')
+    >>> is_mod_relative_path('%ModDir:420%/relative')
+    ('420', 'relative')
+    """
+    if is_named := drop_prefix(path, "%ModDir:"):
+        name, *rest = is_named.split("%/", 1)
+        if not rest:
+            raise ValueError(path)
+        path, = rest
+        return name, path
+
+    elif path := drop_prefix(path, "%ModDir%/"):
+        return None, path
+
+    else:
+        return None
 
 
 def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
@@ -1329,7 +1361,7 @@ def to_base64(image: "PIL.Image.Image", format="webp") -> str:
 def load_xmls(paths: list[Path]) -> Iterator[tuple[Path, etree._Document]]:
     for path in paths:
         try:
-            with path.open('rb') as file:
+            with path.open("rb") as file:
                 doc = etree.parse(file)
 
         except (OSError, etree.Error) as err:
@@ -1376,7 +1408,7 @@ def main() -> None:
     alltexts: dict[str, list[InfoTexts]] = {}
 
     for package in packages:
-        items, texts = _resolve_content_package_paths(vanilla, package)
+        items, texts = _resolve_content_package_paths(vanilla, package, packages)
 
         _index = preitems[package.name] = {}
         for preitem in _iter_content_package_preitems(package, items):
@@ -1540,16 +1572,16 @@ def _validate_load_order_or_exit(
 
 
 def _resolve_content_package_paths(
-    vanilla: ContentPackage, package: ContentPackage
+    vanilla: ContentPackage, current: ContentPackage, packages: list[ContentPackage]
 ) -> tuple[list[Path], list[Path]]:
     """returns (items, texts)"""
     items: list[Path] = []
     texts: list[Path] = []
 
-    convert_path = partial(resolve_path, vanilla=vanilla, current=package)
-    content_paths = extract_ContentPath(package.element, convert_path)
+    convert_path = partial(resolve_path, vanilla=vanilla, current=current, packages=packages)
+    content_paths = extract_ContentPath(current.element, convert_path)
 
-    for content in log_warnings(content_paths, path=package.xmlpath):
+    for content in log_warnings(content_paths, path=current.xmlpath):
         if content.kind == "item":
             items.append(content.path)
         elif content.kind == "text":
@@ -1692,7 +1724,7 @@ class BundlePackageMeta(object):
 class BundleEntity(object):
     identifier: Identifier
     tags: list[Identifier]
-    package: str = None
+    package: str | None = None
 
 
 @dataclass
@@ -1827,6 +1859,8 @@ def _sprite_sheet_css(
     preitem_by_identifier: dict[Identifier, PreItem],
 ) -> StringIO:
 
+    packages = list(package_by_name.values())
+
     sprites_css = StringIO()
 
     if _CHECK_SPRITE_DUPE:
@@ -1852,6 +1886,7 @@ def _sprite_sheet_css(
                     sprite.texture,
                     vanilla=vanilla,
                     current=package,
+                    packages=packages,
                     fallback=xmlpath.parent,
                 )
             except FileNotFoundError as error:
