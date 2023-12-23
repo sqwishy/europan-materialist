@@ -262,7 +262,7 @@ MONEY: Money = "$"
 
 RequiredSkill: TypeAlias = dict[Identifier, float]
 
-IDENTIFIER_PATTERN = re.compile(r"[a-z0-9\._]+", flags=re.IGNORECASE)
+IDENTIFIER_PATTERN = re.compile(r"[a-z0-9\._-]+", flags=re.IGNORECASE)
 
 
 def coerce_to_identifier(value: str) -> Identifier:
@@ -276,6 +276,10 @@ def coerce_to_identifier(value: str) -> Identifier:
 
 
 def make_identifier(value: str) -> Identifier:
+    """
+    >>> make_identifier("guitar-ceta")
+    'guitar-ceta'
+    """
     # the game seems to use a lot of case insensitive stuff in Identifier.cs so
     # lowercase these to normalize values
     value = value.strip().lower()
