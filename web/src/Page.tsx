@@ -49,48 +49,48 @@ type Dictionary = Record<string, string>;
 
 type SearchContext = null | "only-consumed" | "only-produced";
 
+// type MatchText = "substring" | "exact";
+
 const cycleContext =
-  (context: SearchContext) => context === null
-                            ? "only-consumed"
-                            : context === "only-consumed"
-                            ? "only-produced"
-                            : null
+  (context: SearchContext): SearchContext =>
+    context === null
+    ? "only-consumed"
+    : context === "only-consumed"
+    ? "only-produced"
+    : null
 
 type Search = {
-  substring: string,
+  text: string,
+  // match: MatchText,
   context: SearchContext,
 }
-
-type Results = {
-  entities: Game.Entity[],
-  processes: Game.Process[],
-};
-
 
 const searchToString =
   (f: Search): string =>
       f.context === "only-consumed"
-    ? `-${f.substring}`
+    ? `-${f.text}`
     : f.context === "only-produced"
-    ? `*${f.substring}`
-    : f.substring
-
+    ? `*${f.text}`
+    : f.text
 
 /* enforces case insensitive matching */
 const stringToSearch =
   (s: string): Search =>
       s.startsWith("-")
     ? { context: "only-consumed",
-        substring: s.slice(1).toLowerCase() }
+        text: s.slice(1).toLowerCase() }
     : s.startsWith("*")
     ? { context: "only-produced",
-        substring: s.slice(1).toLowerCase() }
+        text: s.slice(1).toLowerCase() }
     : { context: null,
-        substring: s.toLowerCase() }
+        text: s.toLowerCase() }
 
+type Results = {
+  entities: Game.Entity[],
+  processes: Game.Process[],
+};
 
 const resultsLength = (r: Results) => r.entities.length + r.processes.length
-
 
 const loadedResource = <T,>(resource: { loading: boolean, error: any, (): T | undefined }): T | null => {
   let result;
@@ -145,7 +145,7 @@ export const Page = (
 
   const update = (update: Update) => {
     if ("search" in update)
-      setSearchText(searchToString({ ...getSearch(), substring: update.search.trim() }))
+      setSearchText(searchToString({ ...getSearch(), text: update.search.trim() }))
 
     else if ("context" in update)
       setSearchText(searchToString({ ...getSearch(), context: update.context }))
@@ -323,7 +323,7 @@ type GetPackageForIdentifier = (_: Game.Identifier) => string | undefined
 const getsPackageNameByIdentifier =
   (entities: Game.Entity[]): GetPackageForIdentifier =>
   getsValueByKey(Object.fromEntries(entities.filter((e) => e.package)
-                                             .map((e) => [e.identifier, e.package])))
+                                            .map((e) => [e.identifier, e.package])))
 
 /* I hate this -- TODO XXX FIXME */
 export const PackageForIdentifier = createContext<GetPackageForIdentifier>((_) => undefined);
@@ -423,26 +423,34 @@ const filtersBundle =
   ({ getSearch, getLanguage } : { getSearch: () => Search, getLanguage: () => string }) =>
   (bundle: Game.Bundle) => {
     const search = getSearch();
-
-    /* don't show entities unless there is a substring search */
+    /* only show entities when there is search text and no search context */
     let entities: Game.Entity[] = [];
-    let processes = bundle.processes
+    let processes: Game.Process[] = bundle.processes;
 
-    if (search.substring.length) {
-      const identifier = Filters.identifier({
-        substring: search.substring,
+    if (search.text.length) {
+      const identifier = Filters.containsIdentifier({
+        text: search.text,
         localize: getLanguage() in bundle.i18n
                 ? Locale.izesToLower(() => bundle.i18n[getLanguage()])
                 : undefined,
       })
-      const amount = search.context === null
-                   ? undefined
-                   : Filters.amount(search.context)
-      const part = Filters.part({ amount, identifier })
-      const usedIn = Filters.usedInProcess({ part })
 
-      entities = bundle.entities.filter(Filters.entities({ amount, identifier }))
-      processes = processes.filter(Filters.processes({ amount, identifier, usedIn }))
+      const amount = search.context === null ? undefined : Filters.amount(search.context);
+
+      const usedIn = Filters.usedInProcess({
+        part: Filters.part({
+          amount,
+          identifier: Filters.memo(Filters.entityToIdentifierFilter({
+            bundle,
+            entity: Filters.entities({ identifier }),
+          })),
+        })
+      })
+
+      if (search.context === null)
+        entities = bundle.entities.filter(Filters.entities({ identifier }))
+
+      processes = bundle.processes.filter(Filters.processes({ amount, identifier, usedIn }))
     }
 
     return { entities, processes }
@@ -475,7 +483,7 @@ function SearchFilter(props: { search: Search, update: (_: Update) => void }) {
       placeholder="search..."
       accessKey="k"
       list="ctlcomplete"
-      value={props.search.substring}
+      value={props.search.text}
       onchange={(e) => props.update({ "search": e.currentTarget.value })}
     />
   )
@@ -512,14 +520,16 @@ function Entity(props: { entity: Game.Entity }) {
         </span>
         <Sprite identifier={ identifier } />
       </div>
-      <div class="item">
-        <span class="decoration"/>
-        <span class="taglist">
-          <Index each={ tags }>
-            {(tag) => <Identifier>{ tag() }</Identifier>}
-          </Index>
-        </span>
-      </div>
+      <Show when={ tags.length }>
+        <div class="item">
+          <span class="decoration"/>
+          <span class="taglist">
+            <Index each={ tags }>
+              {(tag) => <Identifier>{ tag() }</Identifier>}
+            </Index>
+          </span>
+        </div>
+      </Show>
     </div>
   )
 }
