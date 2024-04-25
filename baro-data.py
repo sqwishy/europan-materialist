@@ -1300,25 +1300,26 @@ def resolve_path(
 
 
 def mod_prefix(path: str) -> tuple[str | None, str] | None:
-    """
-    >>> is_mod_relative_path('not/relative')
-    >>> is_mod_relative_path('%ModDir%/relative')
+    r"""
+    >>> mod_prefix('not/relative')
+    >>> mod_prefix('%ModDir%/relative')
     (None, 'relative')
-    >>> is_mod_relative_path('%ModDir:420%/relative')
+    >>> mod_prefix('%ModDir%\\funnyslash')
+    (None, 'funnyslash')
+    >>> mod_prefix('%ModDir:420%/relative')
     ('420', 'relative')
+    >>> mod_prefix('%ModDir:modid%\\funny\\slash')
+    ('modid', 'funny\\slash')
+    >>> mod_prefix('%moddir%/relative')
+    (None, 'relative')
+    >>> mod_prefix('%mOdDiR:fooBAR%/PRESERVE-case')
+    ('fooBAR', 'PRESERVE-case')
     """
-    if is_named := drop_prefix(path, "%ModDir:"):
-        name, *rest = is_named.split("%/", 1)
-        if not rest:
-            raise ValueError(path)
-        (path,) = rest
-        return name, path
 
-    elif path := drop_prefix(path, "%ModDir%/"):
-        return None, path
-
-    else:
+    match = re.match(r"%ModDir(?::([^%]*))?%[\\/](.*)", path, flags=re.IGNORECASE)
+    if match is None:
         return None
+    return match.groups()
 
 
 def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
