@@ -42,6 +42,7 @@ _CHECK_SPRITE_DUPE = False
 _CHECK_L10N_MISSING = False
 
 PACKAGE_ORIGIN_KEY = "__package-origin"
+PACKAGE_RELATIVE_KEY = "__package-relative-path"
 
 TYPES_TS = """\
 export type Identifier = string;
@@ -395,6 +396,9 @@ class Process(object):
 class Sprite(object):
     element: etree._Element
     package_name: str
+    # the path of the xml file, relative to its package, that contained this
+    # <Sprite> element. a hint for how to find the texture on the filesystem
+    package_relative_path: str
     texture: str
     ltwh: tuple[int, int, int, int]
 
@@ -450,6 +454,7 @@ def extract_Sprite(el) -> Iterator[Sprite | Warning]:
             texture=attrs.use("texture"),
             ltwh=ltwh,
             package_name=attrs.use(PACKAGE_ORIGIN_KEY),
+            package_relative_path=attrs.use(PACKAGE_RELATIVE_KEY),
         )
     except Error as err:
         yield err.as_warning()
@@ -509,6 +514,7 @@ def extract_Fabricate(el, **kwargs) -> Iterator[Process | Warning]:
         "quality",
         "outcondition",
         "hidefornontraitors",
+        "movetoslot",
     )
 
     res = Process(
@@ -775,6 +781,7 @@ def extract_Price(el, **kwargs) -> Iterator[Process | Warning]:
         "canbespecial",
         "displaynonempty",
         "requiresunlock",
+        "requiredfaction",
     )
     # these are probably important if showing/guessing prices
     attrs.ignore("baseprice", "buyingpricemodifier", "multiplier")
@@ -1294,7 +1301,7 @@ def resolve_path(
 
     realpath = paths[content_path]
 
-    assert realpath.resolve().is_relative_to(package_path)
+    assert realpath.resolve().is_relative_to(package_path.resolve())
 
     return realpath
 
@@ -1611,12 +1618,29 @@ def _iter_content_package_preitems(
             # probably almost be preprocessed earlier on but i don't know how
             # this stuff works; it's not well documented the people on discord
             # don't know shit
+            #
+            # EDIT: I hate variantof ...
+            #
+            # There is a weird case where vanilla has an item that is variantof
+            # a item having override from another a mod that replaces the
+            # sprite.
+            #
+            # Backpacks overrides chemicalcrate with its own <Sprite> and
+            # vanilla chemicalcratedamaged uses the same sprite through
+            # variantof.
+            #
+            # In both cases the sprite texture path is relative to the xml file
+            # (instead of the package) but for chemicalcratedamaged it must be
+            # relative to the xml in the mod that overwrote chemicalcrate...
+            #
+            # so PACKAGE_RELATIVE_KEY is a hack for that lulz
             for element in skip_comments(item.element):
                 if element.tag.lower() in (
                     "inventoryicon",
                     "sprite",
                 ) and element_is_non_empty(element):
                     element.attrib[PACKAGE_ORIGIN_KEY] = package.name
+                    element.attrib[PACKAGE_RELATIVE_KEY] = str(xmlpath.parent)
 
             yield PreItem(
                 package=package,
@@ -1893,7 +1917,7 @@ def _sprite_sheet_css(
                     vanilla=vanilla,
                     current=package,
                     packages=packages,
-                    fallback=xmlpath.parent,
+                    fallback=Path(sprite.package_relative_path),
                 )
             except FileNotFoundError as error:
                 log_warning(
