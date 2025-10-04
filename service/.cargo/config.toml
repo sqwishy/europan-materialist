@@ -1,0 +1,2 @@
+# [patch.crates-io]
+# async-native-tls = { path = 'vendor/async-native-tls' }
