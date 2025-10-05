@@ -18,7 +18,7 @@ fn main() -> Result<()> {
 
     dbg!(new_session_string());
 
-    // rt.block_on(async_main()).context("async_main")?;
+    rt.block_on(async_main()).context("async_main")?;
 
     Ok(())
 }
@@ -93,64 +93,97 @@ mod steamapi {
 }
 
 #[derive(Debug)]
-enum SystemMsg {
-    RunLevel(RunLevel),
+pub enum SystemMsg {
+    QuitLevel(QuitLevel),
+}
+
+impl From<QuitLevel> for SystemMsg {
+    fn from(v: QuitLevel) -> Self {
+        Self::QuitLevel(v)
+    }
 }
 
 async fn async_main() -> Result<()> {
     let config = Config::default();
 
-    let mut runlevel = RunLevel::Running;
+    let mut quitlevel: Option<QuitLevel> = None;
 
-    let (mut tx, mut rx) = tokio::sync::watch::channel(runlevel);
+    let (mut sys_s, mut sys_r) = async_channel::bounded::<SystemMsg>(8);
+    let (mut api_s, mut api_r) = async_channel::bounded::<()>(8);
 
-    let mut set = tokio::task::JoinSet::<()>::new();
+    #[derive(Debug)]
+    enum ServiceResult {
+        Api(std::io::Result<()>),
+    }
 
-    let mut api = tokio::task::spawn(
-        www::ApiServer::new(&config.api)
-            .await
-            .context("init api server")?
-            .serve_forever(),
-    );
+    let mut stuff = tokio::task::JoinSet::<ServiceResult>::new();
+
+    let api = www::ApiServer::new(&config.api)
+        .await
+        .context("init api server")?;
+
+    stuff.spawn(async move { ServiceResult::Api(api.serve_forever(sys_r.clone(), api_s).await) });
+
+    let (mut quitstart_s, mut quitstart_r) = async_channel::bounded::<QuitLevel>(8);
+    let (mut quitnext_s, mut quitnext_r) = async_channel::bounded::<QuitLevel>(8);
+    let mut quittimer = tokio::spawn(quitlevel_timer(quitstart_r, quitnext_s));
 
     // let db_thread = std::thread::Builder::new()
     //     .name("materialist-db".to_string())
     //     .spawn(move || db::blocking_actor(db, db_rx))
     //     .context("start database thread")?;
 
-    while !(api.is_finished() && set.is_empty()) {
+    loop {
         tokio::select! {
             biased;
 
-            /* The task set can be empty under zero load. Don't poll on it in that case as it will
-             * return None immediately.
-             *
-             * Only poll on an empty TaskSet when we are shutting down and want to know that it's
-             * empty I guess? */
-            task = set.join_next(), if !set.is_empty() => {
-                let Some(task) = task else {
-                    continue;
+            res = stuff.join_next() => {
+                dbg!("thing exited");
+                dbg!(res);
+
+                if quitlevel.is_none() {
+                    /* if something quit but we aren't shutting down,
+                     * then start shutting down */
+                    let quitnext = QuitLevel::PoliteQuit;
+                    quitstart_s.send(quitnext).await?;
+                    sys_s.send(quitnext.into()).await?;
+                    quitlevel = Some(quitnext);
+                }
+            }
+
+            quitnext = quitnext_r.recv() => {
+                let Ok(quitnext) = quitnext else {
+                    /* TODO */
+                    break;
                 };
-                let _todo = dbg!(task);
+
+                quitlevel = Some(quitnext);
+                quittimer_s.send(quitnext).await?;
+                sys_s.send(quitnext.into()).await?;
+            }
+
+            quitnext = &mut quittimer => {
+                let _ = dbg!(quitnext);
+                break;
             }
 
             sig = tokio::signal::ctrl_c() => {
-                runlevel = sig.map(|()| runlevel.next())
-                    .unwrap_or(RunLevel::Kill);
-                if tx.send_replace(runlevel) == RunLevel::Kill && runlevel == RunLevel::Kill {
+                if let Err(err) = sig {
+                    /* TODO */
+                    dbg!(err);
+                    break;
+                }
+
+                let quitnext = quitlevel.map(QuitLevel::next).unwrap_or_default();
+
+                dbg!(&quitnext);
+
+                if quitlevel.replace(quitnext) == Some(QuitLevel::Kill) {
                     dbg!("super kill");
                     break;
                 }
-            }
 
-            res = &mut api, if !api.is_finished() => {
-                dbg!("long running api stopped!");
-                dbg!(&res);
-                /* TODO advance on timer */
-                if runlevel == RunLevel::Running {
-                    runlevel = RunLevel::PoliteQuit;
-                    tx.send_replace(runlevel);
-                }
+                sys_s.send(quitnext.into()).await?;
             }
         };
     }
@@ -170,7 +203,44 @@ async fn async_main() -> Result<()> {
 
     // podman_pull_steamcmd().await?;
 
-    Ok(())
+    return Ok(());
+
+    async fn quitlevel_timer(
+        r: async_channel::Receiver<QuitLevel>,
+        s: async_channel::Sender<QuitLevel>,
+    ) {
+        use tokio::time::{Duration, sleep};
+
+        while let Ok(quitlevel) = r.recv().await {
+            sleep(match quitlevel {
+                QuitLevel::PoliteQuit => Duration::from_secs(10),
+                QuitLevel::UnpoliteQuit => Duration::from_secs(5),
+                QuitLevel::Kill => Duration::from_secs(5),
+            })
+            .await;
+
+            if s.send(quitlevel.next()).await.is_err() {
+                break;
+            }
+        }
+    }
+
+    // async fn quitlevel_timer(current: Option<QuitLevel>) -> QuitLevel {
+    //     use tokio::time::{sleep, Duration};
+
+    //     let Some(current) = current else {
+    //         std::future::pending::<()>().await;
+    //         return /* unreachable */ Default::default();
+    //     };
+
+    //     sleep(match current {
+    //         QuitLevel::PoliteQuit => Duration::from_secs(10),
+    //         QuitLevel::UnpoliteQuit => Duration::from_secs(5),
+    //         QuitLevel::Kill => Duration::from_secs(5),
+    //     }).await;
+
+    //     current.next()
+    // }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -194,9 +264,9 @@ impl Default for Config {
 
 pub mod www {
     /* axum wants to be Send even if I'm only using it in a single thread lmao */
-    use std::sync::Arc;
     use axum::extract::State;
     use facet::Facet;
+    use std::sync::Arc;
 
     #[derive(Debug)]
     pub struct ApiServer {
@@ -211,17 +281,20 @@ pub mod www {
             Ok(Self { listener })
         }
 
-        pub async fn serve_forever(self) -> std::io::Result<()> {
+        pub async fn serve_forever(
+            self,
+            sys_r: async_channel::Receiver<super::SystemMsg>,
+            _: async_channel::Sender<()>,
+        ) -> std::io::Result<()> {
             use axum::routing::{Router, get, post};
 
             let app = Router::new()
                 .route("/", get(root))
                 // .route("/idk", post(schedule_something))
-                .with_state(Arc::new(ApiConfig))
-                ;
+                .with_state(Arc::new(ApiConfig));
 
             axum::serve(self.listener, app)
-                // .with_graceful_shutdown(todo!())
+                .with_graceful_shutdown(async move { drop(sys_r.recv()) })
                 .await?;
 
             Ok(())
@@ -303,22 +376,20 @@ pub mod db {
 #[derive(Debug)]
 struct Command {
     cmd: tokio::process::Command,
-    runlevel: tokio::sync::watch::Receiver<RunLevel>,
+    quitlevel: async_channel::Receiver<QuitLevel>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-#[repr(u8)]
-pub enum RunLevel {
-    Running = 0,
+#[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd)]
+pub enum QuitLevel {
+    #[default]
     PoliteQuit,
     UnpoliteQuit,
     Kill,
 }
 
-impl RunLevel {
+impl QuitLevel {
     pub fn next(self) -> Self {
         match self {
-            Self::Running => Self::PoliteQuit,
             Self::PoliteQuit => Self::UnpoliteQuit,
             _ => Self::Kill,
         }
@@ -333,7 +404,7 @@ impl RunLevel {
 // cmd.arg("-c")
 //     .arg("for i in (seq 9); echo foo $i >&2; sleep .1; end; and echo woot");
 
-// run_cmd(Command { cmd, runlevel }).await?;
+// run_cmd(Command { cmd, quitlevel }).await?;
 
 async fn run_cmd(cmd: Command) -> Result<()> {
     use std::os::fd::AsRawFd;
@@ -342,7 +413,7 @@ async fn run_cmd(cmd: Command) -> Result<()> {
 
     let Command {
         mut cmd,
-        mut runlevel,
+        mut quitlevel,
     } = cmd;
 
     /* pipe child stdout back to us */
@@ -379,16 +450,13 @@ async fn run_cmd(cmd: Command) -> Result<()> {
 
             exit = child.wait() => { break exit }
 
-            run = runlevel.changed() => {
+            level = quitlevel.recv() => {
                 use rustix::process::Signal;
 
-                let signal = match run {
-                    Ok(()) => match runlevel.borrow_and_update().clone() {
-                        RunLevel::Running => continue,
-                        RunLevel::PoliteQuit => Signal::INT,
-                        RunLevel::UnpoliteQuit => Signal::TERM,
-                        RunLevel::Kill => Signal::KILL,
-                    }
+                let signal = match level {
+                    Ok(QuitLevel::PoliteQuit) => Signal::INT,
+                    Ok(QuitLevel::UnpoliteQuit) => Signal::TERM,
+                    Ok(QuitLevel::Kill) => Signal::KILL,
                     Err(_) => Signal::KILL,
                 };
 
