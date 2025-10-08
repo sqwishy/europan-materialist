@@ -6,21 +6,44 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
-fn main() -> Result<()> {
+pub mod ansi;
+pub mod logging;
+
+// use logging::{butt, crit};
+
+fn main() {
     // let (sig_tx, sig_rx) = async_channel::bounded::<()>(8);
 
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
-        .build()?;
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(err) => {
+            crit!("failed to set up runtime"; "err" => err);
+            return;
+        }
+    };
 
-    println!("Hello, world!");
+    // let body = include_str!("/tmp/workshop-collection-mixed.json");
+    // let r: steamapi::CollectionDetailsResponse = serde_json::from_str(&body).expect("parse json");
+    // dbg!(r);
 
-    dbg!(new_session_string());
+    // let body = include_str!("/tmp/workshop-item-details-mixed.json");
+    // let r: steamapi::PublishedFileDetailsResponse =
+    //     serde_json::from_str(&body).expect("parse json");
+    // dbg!(r);
 
-    rt.block_on(async_main()).context("async_main")?;
+    // dbg!(new_session_string());
 
-    Ok(())
+    match rt.block_on(async_main()).context("async_main") {
+        Ok(()) => (),
+        Err(err) => {
+            crit!("oof");
+            crit!("{:?}", err);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -47,20 +70,35 @@ fn new_session_string() -> SessionString {
     )
 }
 
-mod steamapi {
+pub mod steamapi {
     use facet::Facet;
+    use serde::Deserialize;
 
-    #[derive(Facet, Debug)]
+    #[derive(Facet, Debug, Deserialize)]
     pub struct Response<T> {
         pub response: T,
     }
 
-    #[derive(Facet, Debug)]
+    /**/
+
+    pub type PublishedFileDetailsResponse<'a> = Response<PublishedFileDetailsResults<'a>>;
+
+    #[derive(Facet, Debug, Deserialize)]
     pub struct PublishedFileDetailsResults<'a> {
-        pub publishedfiledetails: Vec<PublishedFileDetails<'a>>,
+        pub result: i32,
+        #[serde(borrow)]
+        pub publishedfiledetails: Vec<PublishedFileDetailsResult<'a>>,
     }
 
-    #[derive(Facet, Debug)]
+    #[derive(Facet, Debug, Deserialize)]
+    pub struct PublishedFileDetailsResult<'a> {
+        pub result: i32,
+        #[serde(flatten)]
+        #[serde(borrow)]
+        pub details: Option<PublishedFileDetails<'a>>,
+    }
+
+    #[derive(Facet, Debug, Deserialize)]
     pub struct PublishedFileDetails<'a> {
         pub publishedfileid: &'a str,
         pub consumer_app_id: u64,
@@ -72,14 +110,43 @@ mod steamapi {
         pub time_updated: u64,
     }
 
-    pub type PublishedFileDetailsResponse<'a> = Response<PublishedFileDetailsResults<'a>>;
+    /**/
 
-    #[derive(Facet, Debug)]
-    pub struct GetPlayerSummariesResults<'a> {
+    pub type CollectionDetailsResponse<'a> = Response<CollectionDetailsResults<'a>>;
+
+    #[derive(Facet, Debug, Deserialize)]
+    pub struct CollectionDetailsResults<'a> {
+        pub result: i32,
+        #[serde(borrow)]
+        pub collectiondetails: Vec<CollectionDetails<'a>>,
+    }
+
+    #[derive(Facet, Debug, Deserialize)]
+    pub struct CollectionDetails<'a> {
+        pub result: i32,
+        pub publishedfileid: &'a str,
+        #[serde(borrow)]
+        pub children: Option<Vec<CollectionDetailsChildren<'a>>>,
+    }
+
+    #[derive(Facet, Debug, Deserialize)]
+    pub struct CollectionDetailsChildren<'a> {
+        pub publishedfileid: &'a str,
+        pub sortorder: u32,
+    }
+
+    /**/
+
+    pub type PlayerSummariesResponse<'a> = Response<PlayerSummariesResults<'a>>;
+
+    #[derive(Facet, Debug, Deserialize)]
+    pub struct PlayerSummariesResults<'a> {
+        pub result: i32,
+        #[serde(borrow)]
         pub players: Vec<PlayerSummary<'a>>,
     }
 
-    #[derive(Facet, Debug)]
+    #[derive(Facet, Debug, Deserialize)]
     pub struct PlayerSummary<'a> {
         pub steamid: &'a str,
         pub personaname: &'a str,
@@ -89,7 +156,149 @@ mod steamapi {
         pub avatarmediumfull: &'a str,
     }
 
-    pub type GetPlayerSummariesResponse<'a> = Response<GetPlayerSummariesResults<'a>>;
+    #[derive(Debug)]
+    pub struct Client {
+        http: reqwest::Client,
+    }
+
+    impl std::ops::Deref for Client {
+        type Target = reqwest::Client;
+
+        fn deref(&self) -> &reqwest::Client {
+            &self.http
+        }
+    }
+
+    impl Client {
+        pub fn new() -> Self {
+            let http = reqwest::Client::new();
+            Self { http }
+        }
+
+        pub async fn request_to_parts(
+            &self,
+            req: reqwest::RequestBuilder,
+        ) -> anyhow::Result<Parts> {
+            use anyhow::Context;
+
+            let rep = req.send().await.context("send")?;
+            let status = rep.status();
+            let body = rep.bytes().await.context("read")?;
+
+            if !status.is_success() {
+                return Err(anyhow::anyhow!(display_response(status, &body)));
+            }
+
+            Ok(Parts { status, body })
+        }
+
+        pub fn request_published_file_details(&self, workshopid: &str) -> reqwest::RequestBuilder {
+            let url =
+                "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
+
+            let params = [("itemcount", "1"), ("publishedfileids[0]", workshopid)];
+
+            self.post(url).form(&params)
+        }
+
+        pub fn request_many_published_file_details<'a, I>(
+            &self,
+            workshopids: I,
+        ) -> reqwest::RequestBuilder
+        where
+            I: Iterator<Item = &'a str>,
+        {
+            let url =
+                "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
+
+            #[rustfmt::skip]
+            const PUBLISHEDFILEIDSKEYS: [&str; 100] = ["publishedfileids[0]", "publishedfileids[1]", "publishedfileids[2]", "publishedfileids[3]", "publishedfileids[4]", "publishedfileids[5]", "publishedfileids[6]", "publishedfileids[7]", "publishedfileids[8]", "publishedfileids[9]", "publishedfileids[10]", "publishedfileids[11]", "publishedfileids[12]", "publishedfileids[13]", "publishedfileids[14]", "publishedfileids[15]", "publishedfileids[16]", "publishedfileids[17]", "publishedfileids[18]", "publishedfileids[19]", "publishedfileids[20]", "publishedfileids[21]", "publishedfileids[22]", "publishedfileids[23]", "publishedfileids[24]", "publishedfileids[25]", "publishedfileids[26]", "publishedfileids[27]", "publishedfileids[28]", "publishedfileids[29]", "publishedfileids[30]", "publishedfileids[31]", "publishedfileids[32]", "publishedfileids[33]", "publishedfileids[34]", "publishedfileids[35]", "publishedfileids[36]", "publishedfileids[37]", "publishedfileids[38]", "publishedfileids[39]", "publishedfileids[40]", "publishedfileids[41]", "publishedfileids[42]", "publishedfileids[43]", "publishedfileids[44]", "publishedfileids[45]", "publishedfileids[46]", "publishedfileids[47]", "publishedfileids[48]", "publishedfileids[49]", "publishedfileids[50]", "publishedfileids[51]", "publishedfileids[52]", "publishedfileids[53]", "publishedfileids[54]", "publishedfileids[55]", "publishedfileids[56]", "publishedfileids[57]", "publishedfileids[58]", "publishedfileids[59]", "publishedfileids[60]", "publishedfileids[61]", "publishedfileids[62]", "publishedfileids[63]", "publishedfileids[64]", "publishedfileids[65]", "publishedfileids[66]", "publishedfileids[67]", "publishedfileids[68]", "publishedfileids[69]", "publishedfileids[70]", "publishedfileids[71]", "publishedfileids[72]", "publishedfileids[73]", "publishedfileids[74]", "publishedfileids[75]", "publishedfileids[76]", "publishedfileids[77]", "publishedfileids[78]", "publishedfileids[79]", "publishedfileids[80]", "publishedfileids[81]", "publishedfileids[82]", "publishedfileids[83]", "publishedfileids[84]", "publishedfileids[85]", "publishedfileids[86]", "publishedfileids[87]", "publishedfileids[88]", "publishedfileids[89]", "publishedfileids[90]", "publishedfileids[91]", "publishedfileids[92]", "publishedfileids[93]", "publishedfileids[94]", "publishedfileids[95]", "publishedfileids[96]", "publishedfileids[97]", "publishedfileids[98]", "publishedfileids[99]"];
+
+            let mut params: Vec<(&str, &str)> = PUBLISHEDFILEIDSKEYS
+                .iter()
+                .copied()
+                .zip(workshopids)
+                .collect();
+
+            let itemcount = params.len().to_string();
+            params.push(("itemcount", &itemcount));
+
+            self.post(url).form(&params)
+        }
+
+        pub fn request_collection_details(&self, workshopid: &str) -> reqwest::RequestBuilder {
+            let url = "https://api.steampowered.com/ISteamRemoteStorage/GetCollectionDetails/v1/";
+
+            let params = [
+                ("collectioncount", "1"),
+                ("publishedfileids[0]", workshopid),
+            ];
+
+            self.post(url).form(&params)
+        }
+
+        pub async fn collection_details(&self, workshopid: &str) -> anyhow::Result<Parts> {
+            let req = self.request_collection_details(&workshopid);
+            self.request_to_parts(req).await
+        }
+    }
+
+    use axum::body::Bytes;
+    use reqwest::StatusCode;
+
+    pub struct Parts {
+        pub status: StatusCode,
+        pub body: Bytes,
+    }
+
+    impl Parts {
+        pub fn json<'a, T>(&'a self) -> anyhow::Result<T>
+        where
+            T: Deserialize<'a>,
+        {
+            use anyhow::Context;
+
+            serde_json::from_slice(&self.body)
+                .context("parse json")
+                .context(self.display())
+        }
+
+        pub fn display(&self) -> impl std::fmt::Display {
+            display_response(self.status, &self.body)
+        }
+    }
+
+    pub mod traits {}
+
+    /* bytes::Bytes is cheaply clonable apparently */
+    fn display_response<B>(status: reqwest::StatusCode, buf: &B) -> InternalResponseDisplay<B>
+    where
+        B: std::ops::Deref<Target = [u8]> + Clone,
+    {
+        InternalResponseDisplay {
+            status,
+            buf: buf.clone(),
+        }
+    }
+
+    #[derive(Debug)]
+    struct InternalResponseDisplay<B> {
+        status: reqwest::StatusCode,
+        buf: B,
+    }
+
+    impl<B> std::fmt::Display for InternalResponseDisplay<B>
+    where
+        B: std::ops::Deref<Target = [u8]>,
+    {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "{} ~", self.status)?;
+            match str::from_utf8(self.buf.as_ref()) {
+                Ok(string) => write!(f, " {}", string),
+                Err(_) => self.buf.iter().map(|i| write!(f, " {}", i)).collect(),
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -103,26 +312,41 @@ impl From<QuitLevel> for SystemMsg {
     }
 }
 
+#[derive(Debug)]
+pub enum SteamCmdMsg {}
+
+#[derive(Debug)]
+pub enum SteamApiMsg {}
+
+#[derive(Debug)]
+pub enum ApiMsg {}
+
 async fn async_main() -> Result<()> {
     let config = Config::default();
 
     let mut quitlevel: Option<QuitLevel> = None;
 
     let (mut sys_s, mut sys_r) = async_channel::bounded::<SystemMsg>(8);
-    let (mut api_s, mut api_r) = async_channel::bounded::<()>(8);
+    let (mut www_s, mut www_r) = async_channel::bounded::<ApiMsg>(8);
 
     #[derive(Debug)]
     enum ServiceResult {
-        Api(std::io::Result<()>),
+        Www(std::io::Result<()>),
     }
 
     let mut stuff = tokio::task::JoinSet::<ServiceResult>::new();
 
-    let api = www::ApiServer::new(&config.api)
+    let listener = tokio::net::TcpListener::bind(&config.www)
         .await
-        .context("init api server")?;
+        .context("bind to listen address")?;
+    let www = www::Server { listener };
 
-    stuff.spawn(async move { ServiceResult::Api(api.serve_forever(sys_r.clone(), api_s).await) });
+    info!("listening"; "addr" => www.listener.local_addr().as_ref().unwrap_or(&config.www));
+
+    stuff.spawn({
+        let sys_r = sys_r.clone();
+        async move { ServiceResult::Www(www.run_forever(sys_r, www_s).await) }
+    });
 
     let (mut quitstart_s, mut quitstart_r) = async_channel::bounded::<QuitLevel>(8);
     let (mut quitnext_s, mut quitnext_r) = async_channel::bounded::<QuitLevel>(8);
@@ -138,8 +362,16 @@ async fn async_main() -> Result<()> {
             biased;
 
             res = stuff.join_next() => {
-                dbg!("thing exited");
-                dbg!(res);
+                let Some(res) = res else {
+                    info!("clean shutdown");
+                    break;
+                };
+
+                match res {
+                    Ok(ServiceResult::Www(Ok(()))) => (),
+                    Ok(ServiceResult::Www(Err(err))) => crit!("service failed"; "err" => err),
+                    Err(joinerr) => crit!("panic?"; "err" => joinerr),
+                }
 
                 if quitlevel.is_none() {
                     /* if something quit but we aren't shutting down,
@@ -153,55 +385,40 @@ async fn async_main() -> Result<()> {
 
             quitnext = quitnext_r.recv() => {
                 let Ok(quitnext) = quitnext else {
-                    /* TODO */
+                    crit!("shutting down"; "why" => "quit timer channel closed");
                     break;
                 };
 
                 quitlevel = Some(quitnext);
-                quittimer_s.send(quitnext).await?;
+                quitstart_s.send(quitnext).await?;
                 sys_s.send(quitnext.into()).await?;
             }
 
             quitnext = &mut quittimer => {
-                let _ = dbg!(quitnext);
+                crit!("shutting down"; "why" => "quit timer terminated");
                 break;
             }
 
             sig = tokio::signal::ctrl_c() => {
                 if let Err(err) = sig {
                     /* TODO */
-                    dbg!(err);
+                    crit!("shutting down"; "why" => "ctrl_c signal handler failed");
                     break;
                 }
 
                 let quitnext = quitlevel.map(QuitLevel::next).unwrap_or_default();
 
-                dbg!(&quitnext);
-
                 if quitlevel.replace(quitnext) == Some(QuitLevel::Kill) {
-                    dbg!("super kill");
+                    warn!("quitting for real this time");
                     break;
                 }
+
+                warn!("ctrl-c, quitting soon"; "level" => logging::dbg(quitnext));
 
                 sys_s.send(quitnext.into()).await?;
             }
         };
     }
-
-    // let url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
-    // let params = [
-    //     ("itemcount", "1"), /**/
-    //     ("publishedfileids[0]", "3045796581c"),
-    // ];
-    // let client = reqwest::Client::new();
-    // let body = client.post(url).form(&params).send().await?.text().await?;
-
-    // dbg!(&body);
-
-    // let body = include_str!("/tmp/derp.json");
-    // dbg!(facet_json::from_str::<steamapi::PublishedFileDetailsResponse>(&body));
-
-    // podman_pull_steamcmd().await?;
 
     return Ok(());
 
@@ -224,23 +441,6 @@ async fn async_main() -> Result<()> {
             }
         }
     }
-
-    // async fn quitlevel_timer(current: Option<QuitLevel>) -> QuitLevel {
-    //     use tokio::time::{sleep, Duration};
-
-    //     let Some(current) = current else {
-    //         std::future::pending::<()>().await;
-    //         return /* unreachable */ Default::default();
-    //     };
-
-    //     sleep(match current {
-    //         QuitLevel::PoliteQuit => Duration::from_secs(10),
-    //         QuitLevel::UnpoliteQuit => Duration::from_secs(5),
-    //         QuitLevel::Kill => Duration::from_secs(5),
-    //     }).await;
-
-    //     current.next()
-    // }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -248,7 +448,7 @@ struct Config {
     pub podman: String,
     pub podman_pull_args: Vec<String>,
     pub steamcmd_image: String,
-    pub api: String,
+    pub www: std::net::SocketAddr,
 }
 
 impl Default for Config {
@@ -257,61 +457,168 @@ impl Default for Config {
             podman: "podman".to_owned(),
             podman_pull_args: vec!["pull".to_owned()],
             steamcmd_image: "docker.io/steamcmd/steamcmd:latest".to_owned(),
-            api: "127.0.0.1:8847".to_owned(),
+            www: "127.0.0.1:8847".parse().unwrap(),
         }
     }
 }
 
 pub mod www {
     /* axum wants to be Send even if I'm only using it in a single thread lmao */
-    use axum::extract::State;
+    use axum::{
+        Router,
+        extract::{Extension, Path},
+        http::{Request, StatusCode, header},
+        response::{Html, IntoResponse, Response},
+    };
+
     use facet::Facet;
     use std::sync::Arc;
 
+    use super::steamapi::{self, traits::*};
+    use crate::crit;
+
     #[derive(Debug)]
-    pub struct ApiServer {
+    pub struct Server {
         pub listener: tokio::net::TcpListener,
     }
 
-    pub struct ApiConfig;
+    impl Server {
+        // pub async fn new(address: &str) -> std::io::Result<Self> {
+        //     let listener = tokio::net::TcpListener::bind(address).await?;
+        //     Ok(Self { listener })
+        // }
 
-    impl ApiServer {
-        pub async fn new(address: &str) -> std::io::Result<Self> {
-            let listener = tokio::net::TcpListener::bind(address).await?;
-            Ok(Self { listener })
-        }
-
-        pub async fn serve_forever(
+        pub async fn run_forever(
             self,
             sys_r: async_channel::Receiver<super::SystemMsg>,
-            _: async_channel::Sender<()>,
+            _: async_channel::Sender<super::ApiMsg>,
         ) -> std::io::Result<()> {
             use axum::routing::{Router, get, post};
 
             let app = Router::new()
                 .route("/", get(root))
+                // .route("/workshop/:key/", get(get_workshop_object))
+                // .route("/workshop-item/{key}/", get(get_workshop_item))
+                .route("/workshop-item/{key}/", post(refresh_workshop_item))
+                .route("/workshop-collection/{key}/", post(refresh_workshop_collection))
                 // .route("/idk", post(schedule_something))
-                .with_state(Arc::new(ApiConfig));
+                .layer(Extension(Arc::new(steamapi::Client::new())))
+                // .layer(axum::middleware::from_fn(wow))
+                ;
 
             axum::serve(self.listener, app)
-                .with_graceful_shutdown(async move { drop(sys_r.recv()) })
+                .with_graceful_shutdown(async move { drop(sys_r.recv().await) })
                 .await?;
 
             Ok(())
         }
     }
 
-    async fn root(_: State<Arc<ApiConfig>>) -> &'static str {
+    async fn root() -> &'static str {
         "Hello, World!"
     }
 
-    #[derive(Facet, Debug)]
-    pub struct Response<T> {
-        pub response: T,
+    async fn refresh_workshop_item(
+        Extension(steamapi): Extension<Arc<steamapi::Client>>,
+        Path(workshopid): Path<String>,
+    ) -> axum::response::Result<String> {
+        use anyhow::Context;
+
+        let req = steamapi.request_published_file_details(&workshopid);
+
+        let parts = steamapi
+            .request_to_parts(req)
+            .await
+            .context("published_file_details")
+            .map_err(internal_error)?;
+
+        let r = parts
+            .json::<steamapi::PublishedFileDetailsResponse>()
+            .context("published_file_details")
+            .map_err(internal_error)?;
+
+        dbg!(&r);
+
+        Ok("OK".to_string())
+    }
+
+    async fn refresh_workshop_collection(
+        Extension(steamapi): Extension<Arc<steamapi::Client>>,
+        Path(workshopid): Path<String>,
+    ) -> axum::response::Result<String> {
+        use anyhow::Context;
+
+        let parts = steamapi
+            .collection_details(&workshopid)
+            .await
+            .context("request_collection_details")
+            .map_err(internal_error)?;
+
+        let r = parts
+            .json::<steamapi::CollectionDetailsResponse>()
+            .context("request_collection_details")
+            .map_err(internal_error)?;
+
+        // match r.response.collectiondetails.get(0) {
+        //     Some(id) if id == workshopid {
+        //     }
+        // }
+        // if !matches!(Some(workshopid), 
+
+        let Some(details) = r.response.collectiondetails.iter().find(|d| d.publishedfileid == workshopid) else {
+            return Err(anyhow::anyhow!("requested workshopid expected in collectiondetails"))
+                .context(parts.display())
+                .map_err(internal_error);
+        };
+
+        dbg!(r);
+
+        Ok("WOOT".to_string())
+    }
+
+    pub fn not_found<E>(err: E) -> Response
+    where
+        anyhow::Error: From<E>,
+    {
+        crit!("not found"; "err" => crate::logging::err(err));
+        (StatusCode::NOT_FOUND, "not found").into_response()
+    }
+
+    pub fn internal_error<E>(err: E) -> Response
+    where
+        anyhow::Error: From<E>,
+    {
+        crit!("internal error"; "err" => crate::logging::err(err));
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "something went wrong with the computer doing the website and the thing didn't work, sorry",
+        )
+            .into_response()
+    }
+
+    pub fn too_many_requests<E>(err: E) -> Response
+    where
+        anyhow::Error: From<E>,
+    {
+        crit!("too many requests"; "err" => crate::logging::err(err));
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            "this computer too busy (x . x) ~~zzZ",
+        )
+            .into_response()
+    }
+
+    pub fn bad_request<E>(err: E) -> Response
+    where
+        E: std::fmt::Display,
+        anyhow::Error: From<E>,
+    {
+        let body = format!("{}", &err);
+        crit!("bad request"; "err" => crate::logging::err(err));
+        (StatusCode::BAD_REQUEST, body).into_response()
     }
 }
 
-trait Serviette {}
 
 pub mod db {
     use rusqlite::Connection;
