@@ -1,3 +1,5 @@
+""" ฅ^•ﻌ•^ฅ """
+
 from argparse import ArgumentParser
 from collections import deque
 from contextlib import asynccontextmanager
@@ -7,6 +9,7 @@ import logging
 from pprint import pformat
 from signal import raise_signal, SIGINT
 from pathlib import Path
+from subprocess import CompletedProcess, CalledProcessError
 
 from starlette.applications import Starlette
 from starlette.routing import Route
@@ -162,6 +165,16 @@ class SteamApiOutputBuf(object):
         self.buf.extend(buf)
         return bytes(self.buf).endswith(self.READYBYTES)
 
+    async def read_until_ready(self):
+        """ This will block if you call it while ready! """
+        while (b := await self.stdout.receive_some()):
+
+            self.buf.extend(b)
+            if bytes(self.buf).endswith(self.READYBYTES):
+                return True
+
+        return False
+
 
 async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
     from subprocess import PIPE, STDOUT
@@ -187,42 +200,43 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
 
         buf = SteamApiOutputBuf(steamcmd.stdout)
 
-        class states:
-            class startup:
-                pass
-            class download_item:
-                pass
-
-        state = states.startup
-
         try:
-            while True:
-
-                if not (b := await steamcmd.stdout.receive_some()):
-                    logger.info("steamcmd stdout EOF")
-                    break
-
-                if not buf.is_ready_for_command(b):
-                    logger.info("steamcmd not ready")
-                    continue
-
+            if not await buf.read_until_ready():
+                logger.warn("steamcmd EOF before startup")
+            else:
                 logger.info("steamcmd ready")
 
-                # if
+            while True:
 
                 # if this is closed, our service is shutting down
                 try:
                     msg: DownloadRequest = await req_r.receive()
                 except (trio.EndOfChannel, trio.ClosedResourceError):
-                    logger.info("steamcmd req_r channel closed")
+                    logger.warn("steamcmd req_r channel closed")
                     break
 
                 await steamcmd.stdin.send_all(
                     b"download_item %s %s\n" % (msg.appid.encode(), msg.itemid.encode())
                 )
 
+                if not await buf.read_until_ready():
+                    logger.warn("steamcmd EOF during download_item")
+                    break
+
+                itempath = SCRATCH_DIR / f'app_{msg.appid}' / f'item_{msg.itemid}'
+                tar_args = ['tar', '-c', '--zstd', '-C', itempath, '.']
                 try:
-                    msg.reply.send_nowait("ฅ^•ﻌ•^ฅ")
+                    result: CompletedProcess = await trio.run_process(tar_args, capture_stdout=True, capture_stderr=True)
+                except CalledProcessError as err:
+                    logger.warn("steamcmd tar failed", err)
+                    reply = ":<"
+                else:
+                    reply = result.stdout
+
+                # finally rmdir or something
+
+                try:
+                    msg.reply.send_nowait(reply)
                 except trio.WouldBlock:
                     continue
         finally:
@@ -308,7 +322,7 @@ async def download(request):
 
         # if cancel_scope.cancelled_caught
 
-    return Response(repr(woot))
+    return Response(woot)
 
 
 @dataclass
