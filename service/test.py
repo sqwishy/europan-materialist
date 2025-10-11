@@ -1,4 +1,12 @@
-""" ฅ^•ﻌ•^ฅ """
+""" ฅ^•ﻌ•^ฅ 
+
+for development, `python -m hypercorn ... --config ... --reload`
+
+depends on:
+  hypercorn[trio]
+  starlette
+"""
+
 
 from argparse import ArgumentParser
 from collections import deque
@@ -6,8 +14,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
 import logging
+import json
+import shutil
 from pprint import pformat
-from signal import raise_signal, SIGINT
 from pathlib import Path
 from subprocess import CompletedProcess, CalledProcessError
 
@@ -36,122 +45,6 @@ HTTP_SERVER_ERROR = Response(
     "something went fucky wucky on the computer doing the website and the thing didn't work, sorry",
     status_code=500,
 )
-
-
-# def ready_and_get(readyq, oneq):
-#     """ returns None if the queue shutdown """
-#     try:
-#         readyq.put_nowait(oneq)
-#     except asyncio.QueueShutDown:
-#         return None
-#     else:
-#         return oneq.get()
-
-
-# async def start_workers(app):
-#     app["readyq"] = readyq = Queue()
-
-#     sigint_sent = False
-
-#     def first_sigint():
-#         nonlocal sigint_sent
-
-#         if sigint_sent:
-#             sigint_sent = True
-#             return True
-
-#         else:
-#             return False
-
-
-#     for _ in range(app["args"].nsteamcmds):
-#         oneq = Queue(maxsize=1)
-#         task = create_task(run_one_steamcmd(readyq, oneq))
-#         task.add_done_callback(lambda _: readyq.shutdown())
-#         task.add_done_callback(lambda _: first_sigint() and raise_signal(SIGINT))
-
-#     yield
-
-#     readyq.shutdown()
-
-#     # drain the readyq of parked guys and let them shut down
-#     try:
-#         while q := readyq.get_nowait():
-#             q.put_nowait(None)
-#     except asyncio.QueueShutDown:
-#         pass
-
-#     await task
-
-
-# async def run_one_steamcmd(readyq, oneq):
-#     args = ["podman", "run", "--rm", "-i",
-#             # "-v", "scratch:/"
-#             "steamcmd/steamcmd:latest",
-#             # "+force_install_dir", "/tmp/bind",
-#             "+login anonymous"]
-#     p = await create_subprocess_exec(*args, stdin=PIPE, stdout=PIPE, stderr=STDOUT)
-
-#     buf = deque(maxlen=64)
-
-#     async def read_lines():
-#         assert p.stdout # pyright
-
-#         while (b := await p.stdout.read(64)):
-#             logger.info("steamcmd » %s", b)
-#             buf.extend(b)
-
-#             if bytes(buf).endswith(b'Steam>\x1b[0m'):
-#                 pass
-
-#         # hmmm...
-
-#     async def read_queue():
-
-#         while req := await ready_and_get(readyq, oneq):
-#             logger.info("queue » %s", req)
-
-#         assert p.stdin is not None # pyright
-
-#         logger.info("quitting")
-#         p.stdin.write(b"quit\n")
-#         p.stdin.close()
-
-#     # "download_item", "602960", workshopid
-
-#     # tar -cv --zstd
-
-#     async with asyncio.TaskGroup() as tg:
-#         # if steamcmd exits, read_lines will exit, we will need to unpark ...
-#         tg.create_task(read_lines())
-#         queue_task = tg.create_task(read_queue())
-#         await p.wait()
-#         queue_task.cancel() # ?????????????
-
-#     logger.info("run_one_steamcmd is quitting")
-
-
-# async def download_request(request):
-#     body = await request.json()
-
-#     if not (appid := body.get('appid')):
-#         return web.HTTPBadRequest()
-
-#     if not (itemid := body.get('itemid')):
-#         return web.HTTPBadRequest()
-
-#     # logger.info("\n%s", pformat(body))
-
-#     # breakpoint()
-
-#     try:
-#         oneq = request.app['readyq'].get_nowait()
-#     except (asyncio.QueueEmpty, asyncio.QueueShutDown):
-#         return web.HTTPTooManyRequests()
-
-#     await oneq.put(DownloadRequest(appid=appid, itemid=itemid))
-
-#     return web.Response(text="(っ◔◡◔)っ")
 
 
 class SteamApiOutputBuf(object):
@@ -185,6 +78,12 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
         "--rm",
         "-i",
         "-v",
+        # This is shared with the most so we can remove the downloaded files at
+        # runtime. But it does not need to be backed by a disk.
+        #
+        # FIXME Each steamcmd should have its own SCRATCH_DIR as to not collide
+        # if they each download the same thing at the same time for some stupid
+        # reason.
         f"{SCRATCH_DIR}:/root/.local/share/Steam/steamcmd/linux32/steamapps/content",
         "steamcmd/steamcmd:alpine",
         # "+force_install_dir", "/tmp/bind",
@@ -233,14 +132,19 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
                 else:
                     reply = result.stdout
 
-                # finally rmdir or something
-
                 try:
                     msg.reply.send_nowait(reply)
                 except trio.WouldBlock:
                     continue
+
+                try:
+                    # finally rmdir or something
+                    await trio.to_thread.run_sync(shutil.rmtree, itempath)
+                except OSError as err:
+                    logger.warn("failed to clean up itempath %s: %s", itempath, err)
+
         finally:
-            with trio.move_on_after(50 * MILLIS, shield=True):
+            with trio.move_on_after(250 * MILLIS, shield=True):
                 try:
                     await steamcmd.stdin.send_all(b"\nquit\n")
                 except (trio.BrokenResourceError, trio.ClosedResourceError):
@@ -257,15 +161,49 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
     logger.info("steamcmd nursery closed!")
 
 
-# async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
-#     task_status.started()
+@dataclass
+class DownloadRequest(object):
+    appid: str
+    itemid: str
+    reply: trio.MemorySendChannel
 
-#     async for msg in req_r:
-#         logger.info("steamcmd » %s", msg)
-#         try:
-#             msg.reply.send_nowait("ฅ^•ﻌ•^ฅ")
-#         except trio.WouldBlock:
-#             continue
+
+async def download(request):
+    logger.info("this is an info log")
+
+    try:
+        body = await request.json()
+    except json.decoder.JSONDecodeError:
+        return HTTP_BAD_REQUEST
+
+    # logger.info("req headers » %s", pformat(request.headers))
+    logger.info("req body » %s", pformat(body))
+
+    if not (appid := body.get("appid")):
+        return HTTP_BAD_REQUEST
+
+    if not (itemid := body.get("itemid")):
+        return HTTP_BAD_REQUEST
+
+
+    reply_s, reply_r = trio.open_memory_channel(0)
+
+    async with reply_r, reply_s:
+        msg = DownloadRequest(appid=appid, itemid=itemid, reply=reply_s)
+
+        try:
+            request.app.state.req_s.send_nowait(msg)
+        except trio.WouldBlock:
+            return HTTP_TOO_MANY_REQUESTS
+
+        woot = await reply_r.receive()
+
+        # with trio.move_on_after(1) as cancel_scope:
+        #     woot = await reply_r.receive()
+
+        # if cancel_scope.cancelled_caught
+
+    return Response(woot)
 
 
 @asynccontextmanager
@@ -294,44 +232,7 @@ async def lifespan(app):
         logger.info("req_r %s, req_s %r", req_r, req_s)
 
 
-async def download(request):
-    body = await request.json()
-
-    logger.info("req body %s", pformat(body))
-
-    if not (appid := body.get("appid")):
-        return HTTP_BAD_REQUEST
-
-    if not (itemid := body.get("itemid")):
-        return HTTP_BAD_REQUEST
-
-    reply_s, reply_r = trio.open_memory_channel(0)
-
-    async with reply_r, reply_s:
-        msg = DownloadRequest(appid=appid, itemid=itemid, reply=reply_s)
-
-        try:
-            request.app.state.req_s.send_nowait(msg)
-        except trio.WouldBlock:
-            return HTTP_TOO_MANY_REQUESTS
-
-        woot = await reply_r.receive()
-
-        # with trio.move_on_after(1) as cancel_scope:
-        #     woot = await reply_r.receive()
-
-        # if cancel_scope.cancelled_caught
-
-    return Response(woot)
-
-
-@dataclass
-class DownloadRequest(object):
-    appid: str
-    itemid: str
-    reply: trio.MemorySendChannel
-
-
+# this isn't used, if we have multiple steamcmds we might use this to handle failures idk
 shutdown = trio.Event()
 
 routes = [Route("/download/", download, methods=["POST"])]
@@ -343,18 +244,39 @@ exception_handlers = {
 
 app = Starlette(routes=routes, lifespan=lifespan, exception_handlers=exception_handlers)
 
+class config:
+    # This corresponds to attributes on hypercorn.config.Config, but we can't
+    # actually use an instance of that here for some reason ...
+    #
+    # Also the attributes here don't match the command line arguments
+    # (accesslogs vs --access-logfile) and it won't notify you about using
+    # non-existent config options, so be careful
 
-logging.basicConfig(level=logging.DEBUG)
+    worker_class = "trio"
+    bind = ["127.0.0.1:8888"]
+    accesslog = '-'
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
 
     from hypercorn.trio import serve
     from hypercorn.config import Config
+    # from hypercorn.__main__ import main as hypercorn_main
+
+    parser = ArgumentParser()
+    # parser.add_argument('hypercorn_args', nargs='*')
+    args = parser.parse_args()
+
+    logger.debug(args)
+
+    # hypercorn_main(['test:app', '-k', 'trio'] + args.hypercorn_args)
+
+    # raise SystemExit(0)
 
     config = Config()
-
-    # config.bind = ["127.0.0.1:"]
     config.worker_class = "trio"
-    # config.graceful_timeout = 1234
+    config.bind = ["127.0.0.1:8888"]
+    config.accesslog = '-'
 
     trio.run(partial(serve, app, config, shutdown_trigger=shutdown.wait))
