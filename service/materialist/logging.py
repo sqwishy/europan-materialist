@@ -239,7 +239,7 @@ class HypercornLogger(object):
         query_string = request["query_string"].decode()
         path_with_qs = request["path"] + ("?" + query_string if query_string else "")
         protocol = request.get("http_version", "ws")
-        response_status = response["status"]
+        response_status = '‥' if response is None else response.get("status")
         method = request.get("method", "?")
 
         try:
