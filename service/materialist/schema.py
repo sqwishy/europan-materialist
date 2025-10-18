@@ -45,6 +45,15 @@ workshop_item = Table(
     meta,
     Column("pk",         Integer, primary_key=True),
     Column("workshopid", Text,    nullable=False),
+)
+
+Index("workshop_item/workshopid", workshop_item.c.workshopid, unique=True)
+
+workshop_item_version = Table(
+    "workshop_item_version",
+    meta,
+    Column("pk",         Integer, primary_key=True),
+    Column("workshopid", Integer, ForeignKey("workshopid.pk"), nullable=False),
     Column("timestamp",  Integer, nullable=False),
     Column("title",      Text,    nullable=False),
     Column("author",     Integer, ForeignKey("steam_player.pk"), nullable=False),
@@ -53,7 +62,7 @@ workshop_item = Table(
     Column("download",   Integer, ForeignKey("download.pk"), nullable=True),
 )
 
-Index("workshop_item/workshopid-created_at", download.c.size, download.c.hash, unique=True)
+# Index("workshop_item_version/workshopid-created_at", workshop_item_version.c.pk, unique=True)
 
 workshop_item_fetch = Table(
     "workshop_item_fetch",
@@ -61,7 +70,7 @@ workshop_item_fetch = Table(
     Column("pk",         Integer, primary_key=True),
     Column("workshopid", Text,    nullable=False),
     Column("timestamp",  Integer, nullable=False),
-    Column("ok",         Integer, ForeignKey("workshop_item.pk"), nullable=True),
+    Column("ok",         Integer, ForeignKey("workshop_item_version.pk"), nullable=True),
     Column("error",      Text, nullable=True),
     CheckConstraint("ok is null or error is null", name="ok and error cannot both be set"),
 )

@@ -27,7 +27,7 @@ from materialist.core import (
     HTTP_TOO_MANY_REQUESTS,
     MILLIS,
 )
-from materialist.misc import itemsetter, ritemgetter, linear_lookup
+from materialist.misc import itemsetter, itemgetter, ritemgetter, linear_lookup
 
 log = logging.getLogger("materialist.steamapi")
 
@@ -38,26 +38,6 @@ _get_publishedfiledetails = ritemgetter("response", "publishedfiledetails")
 _get_collectiondetails = ritemgetter("response", "collectiondetails")
 
 
-async def fanout_steamapi_response(request_fn, batch):
-    try:
-        result = await request_fn()
-
-    except Exception as err:
-        for _, reply in batch:
-            try:
-                reply.send_nowait(err)
-            except (trio.EndOfChannel, trio.ClosedResourceError):
-                pass
-        raise
-
-    else:
-        for _, reply in batch:
-            try:
-                reply.send_nowait(result)
-            except (trio.EndOfChannel, trio.ClosedResourceError):
-                pass
-
-
 async def steamapi_GetPublishedFileDetails(client, workshopids):
     url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
 
@@ -66,29 +46,36 @@ async def steamapi_GetPublishedFileDetails(client, workshopids):
 
     form = dict(zip(PUBLISHEDFILEIDSKEYS, workshopids))
     form["itemcount"] = str(len(workshopids))
-    log.butt(form)
-
-    return form
 
     response = await client.post(url, data=form)
-    log.butt(response)
 
     body = await response.aread()
 
-    return body
+    # body = open("/tmp/GetPublishedFileDetails.json").read()
+
+    deser = orjson.loads(body)
+    results = _get_publishedfiledetails(deser)
+    
+    if any(r['publishedfileid'] != i for r, i in zip(results, workshopids)):
+        raise ValueError("publishedfiledetails have unexpected ordering", (workshopids, results))
+
+    return results
+
+
+type AsyncEnvelope[T, R] = tuple[T, R]
+type SteamApiAsyncEnvelope = AsyncEnvelope[str, dict]
 
 
 @dataclasses.dataclass
-class BatchClient(object):
-    # steamapi: 'Any'
-    items: trio.MemorySendChannel[str]
+class SteamApiEnvelopeClient(object):
+    items: trio.MemorySendChannel[SteamApiAsyncEnvelope]
 
-    async def workshop_item(self, itemid: str):
+    async def workshop_item(self, workshopid: str):
         # todo use 0 buffer size if we can receive before items.send and
         # guarantee no race/lost messages when the sender is using send_nowait
         reply_s, reply_r = trio.open_memory_channel(1)
         with reply_r:
-            await self.items.send((itemid, reply_s))
+            await self.items.send((workshopid, reply_s))
             return await reply_r.receive()
 
 
@@ -289,10 +276,8 @@ async def workshop_item(request):
 async def fanin[
     T
 ](
-    nursery,
-    httpx_client,
     req_r: trio.MemoryReceiveChannel[T],
-    # req_s: trio.MemorySendChannel[list[T]],
+    req_s: trio.MemorySendChannel[list[T]],
     many=MAX_FILE_IDS,
     debounce=50 * MILLIS,
 ):
@@ -303,39 +288,70 @@ async def fanin[
     items: list[T] = []
 
     while True:
+        log.butt('fanin', deadline=deadline, items=items)
+
         with trio.move_on_at(deadline or math.inf) as cancel_scope:
             try:
                 msg: T = await req_r.receive()
             except trio.EndOfChannel as err:
                 return
 
-            log.butt('fanin', msg=msg)
             items.append(msg)
 
         assert len(items) <= many
 
         if len(items) == many or cancel_scope.cancelled_caught:
-            batch = items
-            # send batch?
-            # FIXME
-            async_request = partial(
-                steamapi_GetPublishedFileDetails, httpx_client, [s for s,_ in batch]
-            )
-            nursery.start_soon(partial(fanout_steamapi_response, async_request, batch))
-
+            try:
+                await req_s.send(items)
+            except trio.EndOfChannel as err:
+                return
             items = []
-
             deadline = None
 
-        if deadline is None and items:
+        elif deadline is None and items:
             deadline = trio.current_time() + debounce
+
+
+async def fanout(
+    batch_r: trio.MemoryReceiveChannel[list[SteamApiAsyncEnvelope]],
+    fn,
+):
+    while True:
+        async with trio.open_nursery() as nursery:
+            try:
+                batch = await batch_r.receive()
+            except trio.EndOfChannel:
+                return
+
+            log.butt('fanout', fn=fn, batch=batch)
+
+            args, reply_senders = zip(*batch)
+
+            try:
+                results = await fn(args)
+
+            except Exception as err:
+                log.exception('fanout fn exception', fn=fn, args=args, err=err)
+
+            else:
+                log.butt('fanout results', results=results)
+
+                for sender, result in zip(reply_senders, results):
+                    try:
+                        sender.send_nowait(result)
+                    except trio.ClosedResourceError:
+                        pass
+
+            finally:
+                for s in reply_senders:
+                    s.close()
 
 
 @asynccontextmanager
 async def lifespan(app):
     from sqlalchemy import URL, create_engine
 
-    args = NotImplemented # This is so stupid because this thing has two different ways of starting up ...
+    args = NotImplemented  # This is so stupid because this thing has two different ways of starting up ...
 
     url = URL.create("sqlite", database="/tmp/materialist.sqlite")
     db = create_engine(url, echo=True)
@@ -343,15 +359,23 @@ async def lifespan(app):
     app.state.db = db
 
     items_s, items_r = trio.open_memory_channel(512)
-    async with trio.open_nursery() as nursery, items_s, items_r:
-        app.state.client = BatchClient(items=items_s)
+    manyitems_s, manyitems_r = trio.open_memory_channel(3)
+    async with (
+        trio.open_nursery() as nursery,
+        create_steamapi_httpx_client(args) as httpx_client,
+        items_s,
+        items_r,
+        manyitems_s,
+        manyitems_r,
+    ):
+        app.state.client = SteamApiEnvelopeClient(items=items_s)
 
-        async with create_steamapi_httpx_client(args) as httpx_client:
+        nursery.start_soon(partial(fanin, items_r, manyitems_s))
 
-            # hmmm
-            nursery.start_soon(partial(fanin, nursery, httpx_client, items_r))
+        manyitems_fn = partial(steamapi_GetPublishedFileDetails, httpx_client)
+        nursery.start_soon(partial(fanout, manyitems_r, manyitems_fn))
 
-            yield
+        yield
 
 
 @asynccontextmanager
