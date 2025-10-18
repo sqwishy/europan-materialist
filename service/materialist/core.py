@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from starlette.responses import Response
 
 import materialist.logging
@@ -45,6 +47,12 @@ HTTP_SERVER_ERROR = Response(
     status_code=500,
 )
 
-BAROTRAUMA_APPID = '602960'
+BAROTRAUMA_APPID = 602960
+
+RUN_DIR = '/tmp/materialist' # todo use /var/run or something
 
 MILLIS = 1.0 / 1000.0
+
+def current_timestamp():
+    seconds = datetime.now(timezone.utc).timestamp()
+    return int(seconds * 1000) << 12
