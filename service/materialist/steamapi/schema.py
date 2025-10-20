@@ -87,7 +87,8 @@ workshop_item_version = Table(
     Column("ts",         Integer, nullable=False),
     Column("workshopid", Integer, ForeignKey("workshop_item.pk"), nullable=False),
     Column("title",      Text,    nullable=False),
-    Column("author",     Integer, ForeignKey("player.pk"), nullable=False),
+    Column("author",         Integer, ForeignKey("player.pk"), nullable=False),
+    # Column("author_version", Integer, ForeignKey("player_version.pk")),
     Column("created_at", Integer, nullable=False),
     Column("updated_at", Integer, nullable=False),
     # Column("download",   Integer, ForeignKey("download.pk"), nullable=True),
@@ -95,7 +96,7 @@ workshop_item_version = Table(
 
 Index("workshop_item_version/workshopid-updated_at",
       workshop_item_version.c.workshopid,
-      workshop_item_version.c.updated_at,
+      workshop_item_version.c.ts,
       unique=True)
 
 

@@ -30,8 +30,8 @@ from materialist.core import (
 )
 from materialist.misc import itemsetter, itemgetter, ritemgetter, linear_lookup
 from materialist.steamapi import schema
-from materialist.steamapi.model import WorkshopItemVersion, PlayerVersion
-from materialist.data import open_sqlite
+from materialist.steamapi.model import WorkshopItemVersion, PlayerVersion, Version
+from materialist.steamapi.data import open_sqlite, create_timestamp, maybe_insert_player_version, maybe_insert_workshop_item_version, query_workshop_item
 
 log = logging.getLogger("materialist.steamapi")
 
@@ -75,7 +75,7 @@ async def steamapi_GetPlayerSummaries(client, steamids):
     url = "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/"
 
     if len(steamids) > MAX_FILE_IDS:
-        raise ValueError(f"{len(workshopids)} exceedes the limit of {MAX_FILE_IDS}")
+        raise ValueError(f"{len(steamids)} exceedes the limit of {MAX_FILE_IDS}")
 
     query = [
         ("key", app.state.args.steamapikey),
@@ -125,14 +125,41 @@ class SteamApiEnvelopeClient(object):
 
 
 
-async def workshop_item(request):
-    """ """
-    try:
-        body = await request.json()
-    except json.decoder.JSONDecodeError:
+async def fetch_workshop_item(request):
+    if not (itemid := request.path_params.get("itemid")):
         return HTTP_BAD_REQUEST
 
-    if not (itemid := body.get("itemid")):
+    if '@' in itemid:
+        version = Version.from_str(itemid)
+        return await fetch_workshop_item_version(request, version)
+
+    if not itemid.isalnum():
+        return HTTP_BAD_REQUEST
+
+    async with app.state.db_lock:
+        # FIXME run this in the io thread thingy whatever
+        with log.clocked("fetch_workshop_item tx"):
+            with app.state.db.begin() as tx:
+                v = query_workshop_item(tx, itemid)
+                log.butt(v)
+                
+    return OrjsonResponse(v)
+
+
+async def fetch_workshop_item_version(request, item_version):
+    raise NotImplementedError
+
+
+async def refresh_workshop_item(request):
+    # try:
+    #     body = await request.json()
+    # except json.decoder.JSONDecodeError:
+    #     return HTTP_BAD_REQUEST
+
+    if not (itemid := request.path_params.get("itemid")):
+        return HTTP_BAD_REQUEST
+
+    if not itemid.isalnum():
         return HTTP_BAD_REQUEST
 
     with trio.move_on_after(1) as cancel_scope:
@@ -158,15 +185,19 @@ async def workshop_item(request):
 
     async with app.state.db_lock:
         # FIXME run this in the io thread thingy whatever
-        with log.clocked("workshop_item db phase"):
+        with log.clocked("workshop_item tx"):
             with app.state.db.begin() as tx:
-                ts = data.create_timestamp(tx)
-                raise NotImplementedError
+                ts = create_timestamp(tx)
+
+                player_insert = maybe_insert_player_version(tx, ts, player)
+
+                item_insert = maybe_insert_workshop_item_version(tx, ts, player_insert.root_pk, item)
 
     # log.debug(wow=wow)
 
-    return Response(str("???"))
-
+    raise NotImplementedError
+    # return Response(status_code=201, headers=dict(location=f"/workshop-item/{}/"))
+    # return Response(status_code=303)
 
 
 async def fanin[
@@ -315,8 +346,14 @@ async def sleep(request):
     return Response("ฅ^•ﻌ•^ฅ")
 
 
+class OrjsonResponse(JsonResponse):
+    def render(self, content) -> bytes:
+        return orjson.dumps(content)
+
+
 routes = [
-    Route("/workshop-item/", workshop_item, methods=["POST"]),
+    Route("/workshop-item/{itemid}/", fetch_workshop_item, methods=["GET"]),
+    Route("/workshop-item/{itemid}/refresh/", refresh_workshop_item, methods=["POST"]),
     Route("/test/", dbtest),
     Route("/sleep/", sleep),
 ]

@@ -1,3 +1,5 @@
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+    
 from dataclasses import dataclass
 
 from materialist.misc import linear_lookup
@@ -8,6 +10,25 @@ def isinstance_or_raise(v, inst):
         raise ValueError("expected %r, got %r" % (inst, v))
     return v
 
+
+@dataclass
+class Version():
+    id: str
+    ts: id
+
+    def __post_init__(self):
+        if not self.id or not self.id.isalnum() or len(id) > 64:
+            raise ValueError(self.id)
+
+    def __str__(self):
+        v = urlsafe_b64encode(self.v).rstrip(b'=').decode()
+        return f'{self.id}@{v}'
+
+    @classmethod
+    def from_str(cls, s):
+        id, _, ts = s.partition('@')
+        return cls(id, int(ts))
+        
 
 @dataclass
 class WorkshopItemVersion():

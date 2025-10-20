@@ -21,3 +21,7 @@ def linear_lookup(d):
         return lambda match: next((v for k, v in d.items() if k == match), None)
     else:  # tuple or list of tuples hopefully
         return lambda match: next((v for k, v in d if k == match), None)
+
+
+def sliced_at(s, index):
+    return s[:index], s[index:]

@@ -19,6 +19,7 @@ from functools import partial
 import json
 import hashlib
 import shutil
+import base64
 from pprint import pformat
 from pathlib import Path
 from subprocess import CompletedProcess, CalledProcessError, PIPE, STDOUT
@@ -42,14 +43,14 @@ from materialist.core import (
 log = logging.getLogger("materialist.steamcmd")
 
 # https://www.gnu.org/software/tar/manual/html_node/Reproducibility.html
-# this isn't actually reproducible because mtime but i stopped caring
 TAR_REPRODUCIBLE = [
     "--sort=name",
     "--format=posix",
     "--numeric-owner",
-    "--pax-option='delete=atime,delete=ctime'",
+    "--pax-option=delete=atime,delete=ctime",
     "--owner=0",
     "--group=0",
+    "--mtime=UTC 2000-1-1",
 ]
 
 # RUN_DIR = Path("/var/run/materialist-steamcmd")
@@ -86,14 +87,15 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
         "run",
         "--rm",
         "-i",
-        "-v",
         # This is shared with the most so we can remove the downloaded files at
         # runtime. But it does not need to be backed by a disk.
         #
         # FIXME Each steamcmd should have its own SCRATCH_DIR as to not collide
         # if they each download the same thing at the same time for some stupid
         # reason.
-        f"{SCRATCH_DIR}:/root/.local/share/Steam/steamcmd/linux32/steamapps/content",
+        "-v",
+        # f"{SCRATCH_DIR}:/root/.local/share/Steam/steamcmd/linux32/steamapps/content",
+        f"{SCRATCH_DIR}:/root/Steam/steamapps/workshop/content",
         "steamcmd/steamcmd:alpine",
         # "+force_install_dir", "/tmp/bind",
         "+login anonymous",
@@ -128,13 +130,15 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
                     log.warn("steamcmd req_r channel closed")
                     break
 
-                apppath = SCRATCH_DIR / f"app_{msg.appid}"
-                itempath = apppath / f"item_{msg.itemid}"
+#                 apppath = SCRATCH_DIR / f"app_{msg.appid}"
+#                 itempath = apppath / f"item_{msg.itemid}"
+                # apppath = SCRATCH_DIR / msg.appid
+                itempath = SCRATCH_DIR / msg.appid / msg.itemid
 
                 try:
 
                     await steamcmd.stdin.send_all(
-                        b"download_item %s %s\n"
+                        b"workshop_download_item %s %s\n"
                         % (msg.appid.encode(), msg.itemid.encode())
                     )
 
@@ -143,14 +147,15 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
                         break
 
                     try:
-                        result: CompletedProcess = await tar_path(itempath)
+                        with log.clocked("tar_path"):
+                            result: CompletedProcess = await tar_path(itempath)
                     except CalledProcessError as err:
                         log.warn(
                             "steamcmd tar failed",
                             code=err.returncode,
                             stderr=err.stderr,
                         )
-                        reply = ":<"  # FIXME use a real error thingy
+                        reply = b":<"  # FIXME use a real error thingy
                     else:
                         reply = result.stdout
 
@@ -166,9 +171,9 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
                         # the file is downloaded to itempath but there's an
                         # extra `app_602960/state_602960_602960.patch` file
                         # that is weird and messes with things
-                        await trio.to_thread.run_sync(shutil.rmtree, apppath)
+                        pass # await trio.to_thread.run_sync(shutil.rmtree, itempath)
                     except OSError as err:
-                        log.warn("failed to clean up itempath %s: %s", apppath, err)
+                        log.warn("failed to clean up itempath %s: %s", itempath, err)
 
         finally:
             with trio.move_on_after(250 * MILLIS, shield=True):
@@ -190,7 +195,7 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
 
 async def tar_path(path):
     return await trio.run_process(
-        ["tar", "-c", "--zstd", *TAR_REPRODUCIBLE, "-C", path, "."],
+        ["tar", "--zstd", *TAR_REPRODUCIBLE, "-C", path, "-c", "."],
         capture_stdout=True,
         capture_stderr=True,
     )
@@ -215,7 +220,13 @@ async def download(request):
     if not (appid := body.get("appid")):
         return HTTP_BAD_REQUEST
 
+    if not isinstance(appid, str):
+        return HTTP_BAD_REQUEST
+
     if not (itemid := body.get("itemid")):
+        return HTTP_BAD_REQUEST
+
+    if not isinstance(itemid, str):
         return HTTP_BAD_REQUEST
 
     reply_s, reply_r = trio.open_memory_channel(0)
@@ -228,7 +239,7 @@ async def download(request):
         except trio.WouldBlock:
             return HTTP_TOO_MANY_REQUESTS
 
-        woot = await reply_r.receive()
+        woot: bytes = await reply_r.receive()
 
         # with trio.move_on_after(1) as cancel_scope:
         #     woot = await reply_r.receive()
@@ -252,24 +263,28 @@ async def download(request):
 
 
 async def hash_tar(tar_data):
-    h = hashlib.blake2s()
-    stderr = []
+    """ this needs to include the file contents and file names
+    """
+    h = hashlib.blake2s(digest_size=30)
+    h.update(tar_data)
 
-    async with trio.open_nursery() as nursery:
-        tar = await nursery.start(
-            partial(
-                trio.run_process,
-                ["tar", "-t", "--zstd"],
-                stdin=tar_data,
-                stdout=PIPE,
-                capture_stderr=True,
-            )
-        )
+    # stderr = []
 
-        while b := await tar.stdout.receive_some():
-            h.update(b)
+    # async with trio.open_nursery() as nursery:
+    #     tar = await nursery.start(
+    #         partial(
+    #             trio.run_process,
+    #             ["tar", "-t", "--zstd"],
+    #             stdin=tar_data,
+    #             stdout=PIPE,
+    #             capture_stderr=True,
+    #         )
+    #     )
 
-    return h.hexdigest()
+    #     while b := await tar.stdout.receive_some():
+    #         h.update(b)
+
+    return base64.urlsafe_b64encode(h.digest()).decode()
 
 
 @asynccontextmanager
