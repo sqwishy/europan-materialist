@@ -20,13 +20,17 @@ import json
 import hashlib
 import shutil
 import base64
+import tarfile
+import io
+
+# import compression.zstd
 from pprint import pformat
 from pathlib import Path
 from subprocess import CompletedProcess, CalledProcessError, PIPE, STDOUT
 
 from starlette.applications import Starlette
 from starlette.routing import Route
-from starlette.responses import Response, JSONResponse as JsonResponse
+from starlette.responses import Response
 
 import trio
 
@@ -130,9 +134,6 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
                     log.warn("steamcmd req_r channel closed")
                     break
 
-#                 apppath = SCRATCH_DIR / f"app_{msg.appid}"
-#                 itempath = apppath / f"item_{msg.itemid}"
-                # apppath = SCRATCH_DIR / msg.appid
                 itempath = SCRATCH_DIR / msg.appid / msg.itemid
 
                 try:
@@ -171,7 +172,7 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
                         # the file is downloaded to itempath but there's an
                         # extra `app_602960/state_602960_602960.patch` file
                         # that is weird and messes with things
-                        pass # await trio.to_thread.run_sync(shutil.rmtree, itempath)
+                        await trio.to_thread.run_sync(shutil.rmtree, itempath)
                     except OSError as err:
                         log.warn("failed to clean up itempath %s: %s", itempath, err)
 
@@ -195,7 +196,7 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
 
 async def tar_path(path):
     return await trio.run_process(
-        ["tar", "--zstd", *TAR_REPRODUCIBLE, "-C", path, "-c", "."],
+        ["tar", *TAR_REPRODUCIBLE, "-C", path, "-c", "."],
         capture_stdout=True,
         capture_stderr=True,
     )
@@ -229,62 +230,70 @@ async def download(request):
     if not isinstance(itemid, str):
         return HTTP_BAD_REQUEST
 
+    wait = 0
+
+    if prefer := request.headers.get("prefer"):
+        if prefer.startswith('wait='):
+            try:
+                wait = int(prefer.removeprefix('wait='))
+            except ValueError:
+                log.exception("parse wait=", prefer=prefer)
+
     reply_s, reply_r = trio.open_memory_channel(0)
 
     async with reply_r, reply_s:
         msg = DownloadRequest(appid=appid, itemid=itemid, reply=reply_s)
 
-        try:
-            request.app.state.req_s.send_nowait(msg)
-        except trio.WouldBlock:
-            return HTTP_TOO_MANY_REQUESTS
+        if not wait:
+            try:
+                request.app.state.req_s.send_nowait(msg)
+            except trio.WouldBlock:
+                return HTTP_TOO_MANY_REQUESTS
 
-        woot: bytes = await reply_r.receive()
+        else:
+            with trio.move_on_after(wait) as cancel_scope:
+                await request.app.state.req_s.send(msg)
 
-        # with trio.move_on_after(1) as cancel_scope:
-        #     woot = await reply_r.receive()
+            if cancel_scope.cancelled_caught:
+                return HTTP_TOO_MANY_REQUESTS
 
-        # if cancel_scope.cancelled_caught
+        tar_data: bytes = await reply_r.receive()
+    with log.clocked("tar_hash_and_size"):
+        etag, size = await trio.to_thread.run_sync(tar_hash_and_size, tar_data)
 
-    with log.clocked("hash_tar"):
-        try:
-            etag = await hash_tar(woot)
-        except* CalledProcessError as errs:
-            for err in errs.exceptions:
-                assert isinstance(err, CalledProcessError)
-                log.crit(
-                    "hash_tar failed",
-                    code=err.returncode,
-                    stderr=err.stderr,
-                )
-            raise
+    with log.clocked("zstd_tar"):
+        tar_data = await zstd_tar(tar_data)
 
-    return Response(woot, headers={"etag": etag})
+    return Response(tar_data, headers={"etag": etag, "x-uncompressed-size": str(size)})
 
 
-async def hash_tar(tar_data):
-    """ this needs to include the file contents and file names
-    """
+def tar_hash_and_size(tar_data: bytes) -> tuple[str, int]:
+    """hash of file names and contents & sum size of contents"""
+    t = tarfile.open(fileobj=io.BytesIO(tar_data))
+
     h = hashlib.blake2s(digest_size=30)
-    h.update(tar_data)
+    s = 0
 
-    # stderr = []
+    while tarinfo := t.next():
+        s += tarinfo.size
+        h.update(tarinfo.name.encode())
+        if (reader := t.extractfile(tarinfo)) is not None:
+            while buf := reader.read():
+                h.update(buf)
 
-    # async with trio.open_nursery() as nursery:
-    #     tar = await nursery.start(
-    #         partial(
-    #             trio.run_process,
-    #             ["tar", "-t", "--zstd"],
-    #             stdin=tar_data,
-    #             stdout=PIPE,
-    #             capture_stderr=True,
-    #         )
-    #     )
+    hash: str = base64.urlsafe_b64encode(h.digest()).decode()
+    return hash, s
 
-    #     while b := await tar.stdout.receive_some():
-    #         h.update(b)
 
-    return base64.urlsafe_b64encode(h.digest()).decode()
+async def zstd_tar(tar_data: bytes) -> bytes:
+    """ todo use the compression package in 3.14 """
+    completed = await trio.run_process(
+        ['zstd'], stdin=tar_data, capture_stdout=True, capture_stderr=True
+    )
+    if completed.stderr:
+        log.crit("zstd_tar", exit=completed.returncode, stderr=completed.stderr)
+    completed.check_returncode() # raises if returncode is nonzero
+    return completed.stdout
 
 
 @asynccontextmanager
