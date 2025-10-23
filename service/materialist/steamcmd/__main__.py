@@ -36,6 +36,7 @@ import trio
 
 import materialist.core
 from materialist import logging
+from materialist.misc import linear_lookup
 from materialist.core import (
     exception_handlers,
     HTTP_BAD_REQUEST,
@@ -215,8 +216,7 @@ async def download(request):
     except json.decoder.JSONDecodeError:
         return HTTP_BAD_REQUEST
 
-    # log.info("req headers » %s", pformat(request.headers))
-    log.info("req body » %s", pformat(body))
+    log.butt("req body » %s", pformat(body))
 
     if not (appid := body.get("appid")):
         return HTTP_BAD_REQUEST
@@ -233,9 +233,9 @@ async def download(request):
     wait = 0
 
     if prefer := request.headers.get("prefer"):
-        if prefer.startswith('wait='):
+        if prefer.startswith("wait="):
             try:
-                wait = int(prefer.removeprefix('wait='))
+                wait = int(prefer.removeprefix("wait="))
             except ValueError:
                 log.exception("parse wait=", prefer=prefer)
 
@@ -258,13 +258,14 @@ async def download(request):
                 return HTTP_TOO_MANY_REQUESTS
 
         tar_data: bytes = await reply_r.receive()
+
     with log.clocked("tar_hash_and_size"):
         etag, size = await trio.to_thread.run_sync(tar_hash_and_size, tar_data)
 
-    with log.clocked("zstd_tar"):
-        tar_data = await zstd_tar(tar_data)
+    # with log.clocked("zstd_tar"):
+    #     tar_data = await zstd_tar(tar_data)
 
-    return Response(tar_data, headers={"etag": etag, "x-uncompressed-size": str(size)})
+    return Response(tar_data, headers={"etag": etag, "uncompressed-size": str(size)})
 
 
 def tar_hash_and_size(tar_data: bytes) -> tuple[str, int]:
@@ -286,13 +287,13 @@ def tar_hash_and_size(tar_data: bytes) -> tuple[str, int]:
 
 
 async def zstd_tar(tar_data: bytes) -> bytes:
-    """ todo use the compression package in 3.14 """
+    """todo use the compression package in 3.14"""
     completed = await trio.run_process(
-        ['zstd'], stdin=tar_data, capture_stdout=True, capture_stderr=True
+        ["zstd"], stdin=tar_data, capture_stdout=True, capture_stderr=True
     )
     if completed.stderr:
         log.crit("zstd_tar", exit=completed.returncode, stderr=completed.stderr)
-    completed.check_returncode() # raises if returncode is nonzero
+    completed.check_returncode()  # raises if returncode is nonzero
     return completed.stdout
 
 
