@@ -6,7 +6,7 @@
     --input: var(--solar84);
   --outline: var(--solar60);
  --linkline: var(--solar60);
-   --shadow: var(--solar48);
+   --shadow: var(--solar60);
      --page: var(--solar72);
      --text: var(--solar00);
     --muted: var(--solar24);
@@ -92,8 +92,7 @@ button:not(.linkish), input[type=text], select, details.select-bundle
     box-sizing: content-box;
     background-color: var(--input);
     border:           1px solid var(--outline);
-    box-shadow:  2px  2px var(--shadow),
-                -1px -1px var(--shadow); }
+    box-shadow: 3px 3px var(--shadow) }
 
 button          { cursor: pointer; }
 button:disabled { cursor: not-allowed }
@@ -186,7 +185,7 @@ a.mod:not(:hover)
   { display: flex }
 
 .item > *
-  { flex: 0 0 min-content; align-self: baseline }
+  { flex: 0 1 auto; align-self: baseline }
 
 .item > .decoration
   { align-self: stretch;
