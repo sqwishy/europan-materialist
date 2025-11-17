@@ -9,6 +9,13 @@ for release, run this module/script directly:
 depends on:
   hypercorn[trio]
   starlette
+
+use in podman:
+  podman build -f Containerfile --tag materialist-steamcmd
+  podman run \
+          --image-volume=tmpfs \
+          -v /run/user/1000/podman:/run/podman \
+          --rm -it materialist-steamcmd
 """
 
 from argparse import ArgumentParser
@@ -16,7 +23,6 @@ from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
-import json
 import hashlib
 import shutil
 import base64
@@ -24,21 +30,21 @@ import tarfile
 import io
 
 # import compression.zstd
-from pprint import pformat
 from pathlib import Path
 from subprocess import CompletedProcess, CalledProcessError, PIPE, STDOUT
 
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import Response
+from starlette.convertors import Convertor, register_url_convertor
 
 import trio
 
 import materialist.core
 from materialist import logging
-from materialist.misc import linear_lookup
 from materialist.core import (
     exception_handlers,
+    HTTP_NOT_FOUND,
     HTTP_BAD_REQUEST,
     HTTP_TOO_MANY_REQUESTS,
     HTTP_SERVER_ERROR,
@@ -62,6 +68,8 @@ TAR_REPRODUCIBLE = [
 RUN_DIR = Path("/tmp/materialist-steamcmd")
 SCRATCH_DIR = RUN_DIR / "scratch"
 
+FORMATS = ("tar", "tar.zstd")
+
 
 class SteamApiOutputBuf(object):
     READYBYTES = b"\nSteam>\x1b[0m"
@@ -69,10 +77,6 @@ class SteamApiOutputBuf(object):
     def __init__(self, stdout):
         self.buf = deque(maxlen=64)
         self.stdout = stdout
-
-    # def is_ready_for_command(self, buf=b""):
-    #     self.buf.extend(buf)
-    #     return bytes(self.buf).endswith(self.READYBYTES)
 
     async def read_until_ready(self):
         """This will block if you call it while ready!"""
@@ -88,7 +92,7 @@ class SteamApiOutputBuf(object):
 
 async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
     args = [
-        "podman",
+        "podman-remote",
         "run",
         "--rm",
         "-i",
@@ -150,7 +154,7 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
 
                     try:
                         with log.clocked("tar_path"):
-                            result: CompletedProcess = await tar_path(itempath)
+                            result: CompletedProcess = await tar_path(itempath, msg.tar_opts)
                     except CalledProcessError as err:
                         log.warn(
                             "steamcmd tar failed",
@@ -195,9 +199,9 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
     log.info("steamcmd nursery closed!")
 
 
-async def tar_path(path):
+async def tar_path(path, tar_opts=()):
     return await trio.run_process(
-        ["tar", *TAR_REPRODUCIBLE, "-C", path, "-c", "."],
+        ["tar", *TAR_REPRODUCIBLE, *tar_opts, "-C", path, "-c", "."],
         capture_stdout=True,
         capture_stderr=True,
     )
@@ -207,42 +211,41 @@ async def tar_path(path):
 class DownloadRequest(object):
     appid: str
     itemid: str
+    tar_opts: list[str]
     reply: trio.MemorySendChannel
 
 
-async def download(request):
-    try:
-        body = await request.json()
-    except json.decoder.JSONDecodeError:
-        return HTTP_BAD_REQUEST
-
-    log.butt("req body » %s", pformat(body))
-
-    if not (appid := body.get("appid")):
-        return HTTP_BAD_REQUEST
-
-    if not isinstance(appid, str):
-        return HTTP_BAD_REQUEST
-
-    if not (itemid := body.get("itemid")):
-        return HTTP_BAD_REQUEST
-
-    if not isinstance(itemid, str):
-        return HTTP_BAD_REQUEST
-
-    wait = 0
-
+def prefer_wait(request):
     if prefer := request.headers.get("prefer"):
         if prefer.startswith("wait="):
             try:
-                wait = int(prefer.removeprefix("wait="))
+                return int(prefer.removeprefix("wait=").strip())
             except ValueError:
                 log.exception("parse wait=", prefer=prefer)
+
+
+async def download(request):
+
+    log.butt(request.path_params)
+
+    if not (appid := request.path_params.get("app")):
+        return HTTP_NOT_FOUND
+
+    if not (itemid := request.path_params.get("item")):
+        return HTTP_NOT_FOUND
+
+    if (format := request.path_params.get("format")) not in FORMATS:
+        return HTTP_NOT_FOUND
+
+    exclude = request.query_params.getlist("exclude")
+    tar_opts = [s for e in exclude for s in ('--exclude', e)]
+
+    wait = prefer_wait(request) or 0
 
     reply_s, reply_r = trio.open_memory_channel(0)
 
     async with reply_r, reply_s:
-        msg = DownloadRequest(appid=appid, itemid=itemid, reply=reply_s)
+        msg = DownloadRequest(appid=appid, itemid=itemid, tar_opts=tar_opts, reply=reply_s)
 
         if not wait:
             try:
@@ -252,6 +255,11 @@ async def download(request):
 
         else:
             with trio.move_on_after(wait) as cancel_scope:
+                # FIXME we should race between send() and some awaitable
+                # that resolves when the requester disconnects, but
+                # request.is_disconnected() doesn't have an option to
+                # wait for a disconnect. so we'd probably have to do that
+                # ourselves with its non-public API...
                 await request.app.state.req_s.send(msg)
 
             if cancel_scope.cancelled_caught:
@@ -262,17 +270,24 @@ async def download(request):
     with log.clocked("tar_hash_and_size"):
         etag, size = await trio.to_thread.run_sync(tar_hash_and_size, tar_data)
 
-    # with log.clocked("zstd_tar"):
-    #     tar_data = await zstd_tar(tar_data)
+    if format == "tar.zstd":
+        with log.clocked("zstd_tar"):
+            tar_data = await zstd_tar(tar_data)
 
-    return Response(tar_data, headers={"etag": etag, "uncompressed-size": str(size)})
+    return Response(tar_data, headers={"etag": f'"{etag}"', "uncompressed-size": str(size)})
 
 
 def tar_hash_and_size(tar_data: bytes) -> tuple[str, int]:
-    """hash of file names and contents & sum size of contents"""
+    """hash of file names and contents & sum size of contents
+
+    hash is blake2s size 20 & prefixed with size is i32 big endian. then encoded
+    as urlsafe base64 returned as string.
+
+    raises ValueError if the tar's (reported) size is > ~4GB
+    """
     t = tarfile.open(fileobj=io.BytesIO(tar_data))
 
-    h = hashlib.blake2s(digest_size=30)
+    h = hashlib.blake2s(digest_size=20)
     s = 0
 
     while tarinfo := t.next():
@@ -282,7 +297,7 @@ def tar_hash_and_size(tar_data: bytes) -> tuple[str, int]:
             while buf := reader.read():
                 h.update(buf)
 
-    hash: str = base64.urlsafe_b64encode(h.digest()).decode()
+    hash: str = base64.urlsafe_b64encode(s.to_bytes(4) + h.digest()).decode()
     return hash, s
 
 
@@ -331,7 +346,17 @@ async def lifespan(app):
 # this isn't used, if we have multiple steamcmds we might use this to handle failures idk
 shutdown = trio.Event()
 
-routes = [Route("/download/", download, methods=["POST"])]
+
+class AlnumConvertor(Convertor):
+    regex = "[a-zA-Z0-9]+"
+    convert = to_string = lambda v: v
+
+
+register_url_convertor("alnum", AlnumConvertor)
+
+routes = [
+    Route("/download/{app}/{item:alnum}.{format}", download, methods=["post"]),
+]
 
 app = Starlette(routes=routes, lifespan=lifespan, exception_handlers=exception_handlers)
 
@@ -348,11 +373,15 @@ def main():
 
     parser = ArgumentParser()
     parser.add_argument("-n", "--steamcmds", default=1, type=int)
+    parser.add_argument("-l", "--listen", action="append", type=str)
     args = parser.parse_args()
 
     log.debug(args)
 
     app.state.args = args
+
+    if args.listen:
+        config.bind = args.listen
 
     trio.run(
         partial(serve, app, hypercorn_config(config), shutdown_trigger=shutdown.wait)

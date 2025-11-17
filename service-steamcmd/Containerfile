@@ -1,0 +1,17 @@
+FROM python:3-alpine
+
+RUN apk update && apk add podman-remote
+
+WORKDIR /materialist
+
+RUN python -m venv venv --without-pip --system-site-packages
+
+ADD materialist materialist
+ADD ruff.toml \
+    setup.cfg \
+    setup.py \
+    .
+
+RUN /materialist/venv/bin/python -m pip install .
+
+ENTRYPOINT ["/materialist/venv/bin/python", "-m", "materialist.steamcmd"]
