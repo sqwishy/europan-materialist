@@ -13,7 +13,7 @@ from copy import copy
 from dataclasses import dataclass, is_dataclass, fields, asdict
 from graphlib import TopologicalSorter
 from io import BytesIO, StringIO
-from itertools import count, chain
+from itertools import count, chain, repeat
 from lxml import etree
 from operator import ior
 from pathlib import Path
@@ -1233,7 +1233,7 @@ __PATH_CACHE: dict[tuple[Path, str], dict[str, Path]] = {}
 
 
 def resolve_path(
-    path: str,
+    path: str | Path,
     *,
     vanilla: ContentPackage | None,
     current: ContentPackage,
@@ -1326,7 +1326,7 @@ def mod_prefix(path: str) -> tuple[str | None, str] | None:
     match = re.match(r"%ModDir(?::([^%]*))?%[\\/](.*)", path, flags=re.IGNORECASE)
     if match is None:
         return None
-    return match.groups()
+    return match.groups() # type: ignore
 
 
 def ltwh_to_ltbr(ltwh: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
@@ -1388,113 +1388,100 @@ def main() -> None:
 
     # fmt: off
     parser = ArgumentParser()
-    parser.add_argument("--package", nargs="*", action="append")
-    parser.add_argument("--content", nargs="+", type=Path, required=True, help="path to barotrauma Content or workshop directory containing filelist.xml")
-    parser.add_argument("--output", nargs='?', type=Path, help="path to write package css and json files")
+    parser.add_argument("--content", nargs="*", action="extend", type=Path, help="path to barotrauma Content or workshop directory containing filelist.xml")
+    parser.add_argument("--output", nargs="?", type=Path, help="path to write package css and json files")
+    parser.add_argument("--package", nargs="*", action="append", dest="load_order", help="deprecated alias for --load-order")
+    parser.add_argument("--load-order", nargs="*", action="append", help="list of package names forming a load order")
+    parser.add_argument("--named-load-order", nargs="+", action="append", help="as --load-order but the first item will be used as the file name when writing the fragment")
+    parser.add_argument("--no-index", action="store_const", const="no", dest="index", help="same as --index=no")
+    parser.add_argument("--index", choices=["no", "yes", "files"], default="yes", help="yes, writes index using given load order; files, makes an index including everything from the output directory")
     # fmt: on
 
+    # log_warning("", argv=sys.argv)
     args = parser.parse_args()
+    # log_warning("", args=args)
 
-    logtime("finding contentpackage")
+    load_orders: list[list[str]] = []
+    load_order_names: list[str] = []
 
-    # the ordering of --content is not important
-    # but the order of --package is
+    if args.named_load_order:
+        for name, *order in args.named_load_order:
+            load_orders.append(order)
+            load_order_names.append(name)
 
-    package_me: list[list[ContentPackage]]
-    packages: list[ContentPackage]
+    if args.load_order:
+        load_orders += args.load_order
 
-    packages = list(log_warnings(_rglob_for_ContentPackages(args.content)))
-    logtime(f"packages: {', '.join(package.name for package in packages)}")
-
-    # sanity checks
-
-    vanilla = _find_core_package_or_exit(packages)
-    package_me = _validate_load_order_or_exit(vanilla, packages, args.package)
-
-    # parse item xml; read identifier and variantof
-
-    logtime("reading item identifiers...")
-
-    preitems: dict[str, dict[Identifier, PreItem]] = {}
-    alltexts: dict[str, list[InfoTexts]] = {}
-
-    for package in packages:
-        items, texts = _resolve_content_package_paths(vanilla, package, packages)
-
-        _index = preitems[package.name] = {}
-        for preitem in _iter_content_package_preitems(package, items):
-            _index[preitem.identifier] = preitem
-        logtime(f"{package.name} » {len(_index)} items")
-
-        _texts = alltexts[package.name] = []
-        _texts.extend(_iter_content_package_infotexts(package, texts))
-        _words_count = sum(len(i.dictionary) for i in _texts)
-        logtime(f"{package.name} » {len(_texts)} texts » {_words_count} words")
-
-    # build bundles for output
+    # init_bundles can raise SystemExit
 
     bundles: list[Bundle] = []
 
-    for load_order in package_me:
-        logtime(f"bundling {[p.name for p in load_order]}")
-        bundles.append(build_bundle(load_order, preitems, alltexts))
+    if load_orders:
+        bundles = init_bundles(list(args.content), load_orders)
+
+    assert len(bundles) == len(load_orders)
 
     if not args.output:
         log_warning("no --output path specified, not writing anything!")
         return
 
-    # write bundles under output
+    index: list[tuple[Path, Path]] = []
 
     args.output.mkdir(parents=True, exist_ok=True)
 
+    for name, bundle in zip(chain(load_order_names, repeat(None)), bundles):
+        logtime(f"writing {bundle}")
+
+        if name is None:
+            name = mangled_filename(*(f"{p.name}-{p.version}" for p in bundle.load_order))
+
+        bundle_path = (args.output / name).with_suffix(".json")
+        css_path = (args.output / name).with_suffix(".css")
+
+        css_path.open("w").write(bundle.sprites_css.getvalue())
+        logtime(f"wrote {css_path}")
+
+        bundle_json = {
+            "name": name,
+            "load_order": bundle.load_order,
+            "entities": bundle.entities,
+            "processes": bundle.processes,
+            "i18n": bundle.i18n,
+        }
+        json.dump(
+            bundle_json,
+            default=serialize_dataclass,
+            separators=(",", ":"),
+            fp=bundle_path.open("w"),
+        )
+        logtime(f"wrote {bundle_path}")
+
+        index.append((bundle_path, css_path))
+
+
+    if args.index == 'no':
+        return
+    
+    elif args.index == 'files':
+        for bundle_path in args.output.glob("*.json"):
+            css_path = bundle_path.with_suffix(".css")
+            index.append((bundle_path, css_path))
+
     index_path = args.output / "index.ts"
-    with index_path.open("w") as index:
 
-        print("/* generated by baro-data.py */", file=index)
+    with index_path.open("w") as f:
+        print("/* generated by baro-data.py */", file=f)
 
-        for i, bundle in enumerate(bundles):
-            logtime(f"writing {bundle}")
-
-            name = mangled_filename(
-                *(f"{p.name}-{p.version}" for p in bundle.load_order)
-            )
-            bundle_path = (args.output / name).with_suffix(".json")
-            css_path = (args.output / name).with_suffix(".css")
-
-            css_path.open("w").write(bundle.sprites_css.getvalue())
-            logtime(f"wrote {css_path}")
-
-            dumpme = {
-                "name": name,
-                "load_order": bundle.load_order,
-                "entities": bundle.entities,
-                "processes": bundle.processes,
-                "i18n": bundle.i18n,
-            }
-            json.dump(
-                dumpme,
-                default=serialize_dataclass,
-                separators=(",", ":"),
-                fp=bundle_path.open("w"),
-            )
-            logtime(f"wrote {bundle_path}")
-
-            # for language_name, dictionary in bundle.i18n.items():
-            #     language_path = path_nosuffix.with_name(
-            #         f"{path_nosuffix.name}_{mangled_filename(language_name)}.json"
-            #     )
-            #     json.dump(dictionary, fp=language_path.open("w"))
-            #     logtime(f"wrote {language_path}")
-
+        for i, (bundle_path, css_path) in enumerate(index):
             print(
                 f'import {{ load_order as load_order{i}, name as name{i}, }} from "./{bundle_path.name}"',
-                file=index,
+                file=f,
             )
-            print(f'import bundle{i} from "./{bundle_path.name}?url"', file=index)
-            print(f'import sprites{i} from "./{css_path.name}?url"', file=index)
+            print(f'import bundle{i} from "./{bundle_path.name}?url"', file=f)
+            print(f'import sprites{i} from "./{css_path.name}?url"', file=f)
 
-        print("export const BUNDLES: LoadableBundle[] = [", file=index)
-        for i, bundle in enumerate(bundles):
+        print("export const BUNDLES: LoadableBundle[] = [", file=f)
+        for i, _ in enumerate(index):
             pass
             print(
                 "{ "
@@ -1503,13 +1490,13 @@ def main() -> None:
                 "url: bundle%(i)d, "
                 "sprites: sprites%(i)d, "
                 "}," % {"i": i},
-                file=index,
+                file=f,
             )
-        print("]\n", file=index)
+        print("]\n", file=f)
 
-        print(TYPES_TS, file=index)
+        print(TYPES_TS, file=f)
 
-    logtime(f"wrote {index_path}")
+    logtime(f"wrote {len(index)} entries to {index_path}")
 
 
 def _rglob_for_ContentPackages(paths: list[Path]) -> Iterator[ContentPackage | Warning]:
@@ -1521,6 +1508,8 @@ def _rglob_for_ContentPackages(paths: list[Path]) -> Iterator[ContentPackage | W
                     if isinstance(item, Warning):
                         yield item.with_path(xmlpath)
                     else:
+                        # FIXME this can bind multiple ContentPackages to the
+                        # same path, which will not work
                         yield ContentPackage(
                             path=path, xmlpath=xmlpath, element=element, **asdict(item)
                         )
@@ -1543,27 +1532,32 @@ def _find_core_package_or_exit(packages: list[ContentPackage]) -> ContentPackage
 def _validate_load_order_or_exit(
     vanilla: ContentPackage,
     packages: list[ContentPackage],
-    name_load_order_list: list[list[str]] | None,
+    load_order_list: list[list[str]] | None,
 ) -> list[list[ContentPackage]]:
-    if not name_load_order_list:
+    if not load_order_list:
         return [[vanilla]]
 
     package_load_order_list = []
     package_by_name = {package.name: package for package in packages}
-    package_names = (package.name for package in packages)
+    package_by_path = {package.path.name: package for package in packages}
+    package_names = set(chain(package_by_name, package_by_path))
 
-    if missing := set(chain.from_iterable(name_load_order_list)) - set(package_names):
+    if missing := set(chain.from_iterable(load_order_list)) - package_names:
         log_warning(
             "some requested packages were not found under --content",
             missing=missing,
+            available=package_names,
         )
         raise SystemExit(1)
 
-    for name_load_order in name_load_order_list:
-        if not name_load_order:
+    for load_order in load_order_list:
+        if not load_order:
             continue
 
-        package_load_order = [package_by_name[name] for name in name_load_order]
+        package_load_order = [
+            package_by_path.get(name) or package_by_name[name]
+            for name in load_order
+        ]
         if package_load_order[0].iscorepackage:
             pass
 
@@ -1777,8 +1771,56 @@ FILENAME_MANGLE_PATTERN = re.compile(r"[^a-z0-9]", flags=re.IGNORECASE)
 def mangled_filename(*parts: str) -> str:
     return "+".join(FILENAME_MANGLE_PATTERN.sub("-", p) for p in parts)[:128]
 
+    
+def init_bundles(content: list[Path], requested_packages: list[list[str]]) -> list[Bundle]:
+    logtime("finding contentpackage")
+    
+    # the ordering of --content is not important
+    # but the order of --package is
 
-def build_bundle(
+    package_me: list[list[ContentPackage]]
+    packages: list[ContentPackage]
+
+    packages = list(log_warnings(_rglob_for_ContentPackages(content)))
+    logtime(f"packages: {', '.join(package.name for package in packages)}")
+
+    # sanity checks
+
+    vanilla = _find_core_package_or_exit(packages)
+    package_me = _validate_load_order_or_exit(vanilla, packages, requested_packages)
+
+    # parse item xml; read identifier and variantof
+
+    logtime("reading item identifiers...")
+
+    preitems: dict[str, dict[Identifier, PreItem]] = {}
+    alltexts: dict[str, list[InfoTexts]] = {}
+
+    for package in packages:
+        items, texts = _resolve_content_package_paths(vanilla, package, packages)
+
+        _index = preitems[package.name] = {}
+        for preitem in _iter_content_package_preitems(package, items):
+            _index[preitem.identifier] = preitem
+        logtime(f"{package.name} » {len(_index)} items")
+
+        _texts = alltexts[package.name] = []
+        _texts.extend(_iter_content_package_infotexts(package, texts))
+        _words_count = sum(len(i.dictionary) for i in _texts)
+        logtime(f"{package.name} » {len(_texts)} texts » {_words_count} words")
+
+    # build bundles for output
+
+    bundles: list[Bundle] = []
+
+    for load_order in package_me:
+        logtime(f"bundling {[p.name for p in load_order]}")
+        bundles.append(init_bundle(load_order, preitems, alltexts))
+
+    return bundles
+
+
+def init_bundle(
     load_order: list[ContentPackage],
     preitem_by_package: dict[str, dict[Identifier, PreItem]],
     texts_by_package: dict[str, list[InfoTexts]],
@@ -1854,6 +1896,7 @@ def build_bundle(
     for lang, dictionary in i18n.items():
         logtime(f"{len(dictionary)} in {lang}")
 
+    # fmt: off
     return Bundle(
         load_order=[
             BundlePackageMeta(
@@ -1880,6 +1923,7 @@ def build_bundle(
         i18n=i18n,
         sprites_css=sprites_css,
     )
+    # fmt: on
 
 
 def _sprite_sheet_css(
