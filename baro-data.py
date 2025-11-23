@@ -494,7 +494,7 @@ def extract_Item(item) -> Iterator[Process | Warning]:
 
 
 def extract_item_identifier(el) -> Identifier:
-    identifier = el.get("identifier")
+    identifier = el.get("identifier") or el.get("Identifier")
 
     if not identifier:
         raise MissingAttribute(attribute="identifier", element=el)
@@ -1551,14 +1551,12 @@ def _validate_load_order_or_exit(
         raise SystemExit(1)
 
     for load_order in load_order_list:
-        if not load_order:
-            continue
-
         package_load_order = [
             package_by_path.get(name) or package_by_name[name]
             for name in load_order
         ]
-        if package_load_order[0].iscorepackage:
+
+        if package_load_order and package_load_order[0].iscorepackage:
             pass
 
         elif any(p.iscorepackage for p in package_load_order):
@@ -1771,10 +1769,10 @@ FILENAME_MANGLE_PATTERN = re.compile(r"[^a-z0-9]", flags=re.IGNORECASE)
 def mangled_filename(*parts: str) -> str:
     return "+".join(FILENAME_MANGLE_PATTERN.sub("-", p) for p in parts)[:128]
 
-    
+
 def init_bundles(content: list[Path], requested_packages: list[list[str]]) -> list[Bundle]:
     logtime("finding contentpackage")
-    
+
     # the ordering of --content is not important
     # but the order of --package is
 
