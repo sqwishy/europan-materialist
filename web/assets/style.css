@@ -258,6 +258,11 @@ a.mod:not(:hover)
 .item > .what
   { flex: 1 1 max-content }
 
+.item > .comfy
+  { flex-grow: 1; flex-basis: min-content }
+.item > .comfy ~ *
+  { flex-basis: auto }
+
 .item > .taglist
   { flex-grow: 1 }
 
@@ -395,6 +400,8 @@ a.mod:not(:hover)
 .ctl > details[open],
 .ctl > .ctl-main-item
   { flex: 1 1 min-content; min-width: 0 }
+.ctl > button
+  { min-width: max-content }
 
 
 .ctl .context-search
