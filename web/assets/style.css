@@ -109,7 +109,7 @@ p
 
 button:not(.linkish), input[type=text], select, details.select-bundle
   { padding:    6px 9px;
-    box-sizing: content-box;
+    /* box-sizing: content-box; */
     background-color: var(--input);
     border:     1px solid var(--outline);
     box-shadow: 3px 3px var(--shadow) }
@@ -384,7 +384,13 @@ a.mod:not(:hover)
 
 /* messes with the surrogate hack because buttons are taller than inputs for
  * some reason */
-/* .ctl button { line-height: 0 } */
+/* i literally can't get input and button to be the same height naturally,
+ * so we set it explicitly idk fuck me i guess */
+.ctl > button,
+.ctl > input,
+.surrogate { height: 36px; box-sizing: border-box }
+/* .ctl > * */
+/*   { line-height: 0 } */
 
 .surrogate
   { display: none; visibility: hidden }
