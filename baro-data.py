@@ -85,6 +85,7 @@ export type Dictionary = Record<string, string>
 
 export type Bundle = {
   name: string,
+  identifier: string | null,
   load_order: Package[],
   entities: Entity[],
   processes: Process[],
@@ -1738,6 +1739,7 @@ def _extract_element_ItemHeader(items) -> Iterator[ItemHeader]:
 @dataclass
 class BundlePackageMeta(object):
     name: str
+    identifier: str | None
     version: str | None
     steamworkshopid: str | None
 
@@ -1899,6 +1901,9 @@ def init_bundle(
         load_order=[
             BundlePackageMeta(
                 name=package.name,
+                identifier=None
+                if package.iscorepackage
+                else coerce_to_identifier(package.name),
                 version=package.gameversion
                 if package.iscorepackage
                 else package.modversion,
