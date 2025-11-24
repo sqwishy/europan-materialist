@@ -24,6 +24,12 @@ const pct = (f: number | null) => f === null ? '' : `${100 * f}%`
 
 const unreachable = (n: never): never => n;
 
+// This was suppoosed to fix issues on mobile when the on-screen-keyboard pops
+// up but it doesn't work and debugging on mobile is fucking impossible without
+// tooling
+// const elementFromViewportBottom =
+// 	e => document.documentElement.clientHeight - Math.round(e.target.getBoundingClientRect().bottom);
+
 // const dbg = v => console.log(v) || v;
 
 const looksupLoadableBundleFromBundleParam =
@@ -167,15 +173,19 @@ export const Page = (
           <IntroTip dismiss={() => setShowIntro(false)} />
         </Show>
 
-        <div>
+        <div class="ctl">
           <Show
-             when={Game.BUNDLES.length > 1}
-             fallback={<LoadOrder loadOrder={getCurrentLoadableBundle().load_order} links={true} />}
-          >
-            <details class="select-bundle">
+            when={Game.BUNDLES.length > 1}
+            fallback={
+             <div class="ctl-main-item">
+               <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} />
+             </div>
+            }>
+            <details class="select-bundle ctl-main-item">
               <summary>
-                <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} links={true} />
+                <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} />
               </summary>
+
               <For each={Game.BUNDLES}>
                 {(bundle) => (
                   <div class="loadable-bundle">
@@ -187,11 +197,19 @@ export const Page = (
               </For>
             </details>
           </Show>
-        </div>
 
-        <Show when={loadedBundle()}>
-          {(bundle) => <div><SelectLanguage language={getLanguage()} options={bundle().i18n} update={update} /></div>}
-        </Show>
+          <Show when={loadedBundle()}>
+            {(bundle) =>
+              <SelectLanguage
+                language={getLanguage()}
+                options={bundle().i18n}
+                update={update} />}
+          </Show>
+
+          <Show when={loadedBundle()}>
+            {(bundle) => <LoadOrderDetails loadOrder={bundle().load_order} />}
+          </Show>
+        </div>
       </header>
 
       <main>
@@ -222,7 +240,7 @@ export const Page = (
               {" "}
               <span class="identifier">{ props.build.hash }</span>
             </Show>
-            \ — generated on { DATETIME_FMT.format(props.build.date) }
+            &nbsp;— generated on { DATETIME_FMT.format(props.build.date) }
           </small>
         </p>
 
@@ -231,8 +249,8 @@ export const Page = (
             This site uses assets and content from <a href="https://barotraumagame.com/">Barotrauma</a>.
             It is unaffiliated with <a
             href="https://undertowgames.com/">Undertow Games</a> or any
-            other publisher -- or anyone at all really.\ 
-            <em class="muted">Have you been taking your Calyxanide?</em>
+            other publisher — or anyone at all really.
+            &emsp;<em class="muted">Have you been taking your Calyxanide?</em>
           </small>
         </p>
       </footer>
@@ -253,11 +271,11 @@ const IntroTip = (props: { dismiss: () => void }) => (
 );
 
 
-const LoadOrder = (props: { loadOrder: Game.Package[], links?: boolean }) => {
+const LoadOrder = (props: { loadOrder: Game.Package[] }) => {
   return (
     <ol class='load-order'>
       <Index each={props.loadOrder}>
-        {(item) => <LoadOrderListItem package={item()} link={props.links} />}
+        {(item) => <LoadOrderListItem package={item()} />}
       </Index>
     </ol>
   )
@@ -273,6 +291,50 @@ const LoadOrderListItem = (props: { package: Game.Package, link?: boolean }) => 
       </Show>
     </li>
   );
+}
+
+const LoadOrderDetails = (props: { loadOrder: Game.Package[] }) => {
+  return (
+    <Show when={(props.loadOrder.length || 0) > 1}>
+      <details class="select-bundle">
+        <summary>
+          <div style="font-size: 130%; padding: 4px 6px; text-align: right">
+            <i style="mask: var(--info) no-repeat 0 0/100% 100%; background: var(--muted)">&emsp;</i>
+          </div>
+        </summary>
+        <LinkedLoadOrder loadOrder={props.loadOrder} />
+      </details>
+    </Show>
+  )
+}
+
+const LinkedLoadOrder = (props: { loadOrder: Game.Package[] }) => {
+  return (
+      <For each={props.loadOrder}>
+        {pkg =>
+          <div class="item">
+            <span class="what">
+              <Show
+                when={ pkg.steamworkshopid }
+                fallback={ pkg.name }
+                >
+                <a href={`${WORKSHOP_BASE_URL}${pkg.steamworkshopid}`}>
+                  { pkg.name }
+                </a>
+              </Show>
+              <Show when={ pkg.version }>
+                &nbsp;<span class="identifier">{ pkg.version }</span>
+              </Show>
+            </span>
+            <Show when={ pkg.identifier }>
+              <span>
+                <A href={`?q=${ pkg.identifier }`} class="mod">{ pkg.identifier }</A>
+              </span>
+            </Show>
+          </div>
+        }
+      </For>
+  )
 }
 
 
@@ -394,7 +456,7 @@ export const ListAndSearch = (
       <div><hr/></div>
 
       <div
-        class="ctl"
+        class="ctl ctl-sticky"
         data-fixed={getFixedSearch() !== null ? '' : undefined}
         style={{ top: getFixedSearch() !== null ? `${getFixedSearch()}px` : undefined }}
         onmouseenter={(e) => setFixedSearch(e.target.getBoundingClientRect().top) }
@@ -478,7 +540,7 @@ function SearchFilter(props: { search: Search, update: (_: Update) => void }) {
   return (
     <input
       type="text"
-      class="search"
+      class="search ctl-main-item"
       title="search by identifier or item name"
       placeholder="search..."
       accessKey="k"

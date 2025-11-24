@@ -12,6 +12,7 @@
     --muted: var(--solar24);
  --consumed: var(--solar-red50);
  --produced: var(--solar-cyan50);
+    --hover: var(--produced);
       --mod: #6767e0;
         --station-item: var(--solar24);
      --station-outline: var(--solar12);
@@ -20,8 +21,13 @@
        --station-muted: var(--solar84);
        --station-light: var(--solar36);
         --chevron-open: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 3'%3E%3Cpath d='M 1.0 1 l 1 1 l 1 -1' stroke='%23002b36' stroke-width='0.3' fill='none'/%3E%3C/svg%3E");
+      --chevron-active: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Cpath d='M 2.5 1 l -1 1 l 1 1' stroke='%23ffffff' stroke-width='0.3' fill='none'/%3E%3C/svg%3E");
        --chevron-hover: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Cpath d='M 2.5 1 l -1 1 l 1 1' stroke='%23002b36' stroke-width='0.3' fill='none'/%3E%3C/svg%3E");
-     }
+                /* duotone */
+                --info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' width='256' height='256'%3E%3Cg fill='black'%3E%3Cpath d='M224 128a96 96 0 1 1-96-96a96 96 0 0 1 96 96' opacity='.2'/%3E%3Cpath d='M144 176a8 8 0 0 1-8 8a16 16 0 0 1-16-16v-40a8 8 0 0 1 0-16a16 16 0 0 1 16 16v40a8 8 0 0 1 8 8m88-48A104 104 0 1 1 128 24a104.11 104.11 0 0 1 104 104m-16 0a88 88 0 1 0-88 88a88.1 88.1 0 0 0 88-88m-92-32a12 12 0 1 0-12-12a12 12 0 0 0 12 12'/%3E%3C/g%3E%3C/svg%3E");
+              }
+
+
 
 @media (prefers-color-scheme: dark) {
 :root
@@ -35,6 +41,7 @@
     --muted: var(--ayu72);
  --consumed: #f07171;
  --produced: #4cbf99;
+    --hover: var(--produced);
       --mod: var(--ayu-violet50);
         --station-item: var(--ayu36);
      --station-outline: var(--ayu24);
@@ -71,11 +78,16 @@ section > p,
 section > div,
 footer > p,
 footer > div
-  { margin: 10px; max-width: 500px; box-sizing: border-box }
+  { margin: 10px; max-width: 580px; box-sizing: border-box }
 
 
 .muted { color: var(--muted) }
 .smol { font-size: smaller }
+.caps { font-variant-caps: small-caps }
+.nowrap
+  { overflow:      hidden;
+    text-overflow: ellipsis;
+    white-space:   nowrap }
 
 
 a, input, button, select
@@ -84,36 +96,55 @@ a, input, button, select
     font:        inherit;
     text-align:  inherit;
     text-shadow: inherit;
-    line-height: normal }
+    line-height: normal;
+    padding: 0 }
+
+
+pre
+  { overflow-x: scroll }
+
+p
+  { overflow-x: hidden; word-wrap: break-word }
 
 
 button:not(.linkish), input[type=text], select, details.select-bundle
   { padding:    6px 9px;
     box-sizing: content-box;
     background-color: var(--input);
-    border:           1px solid var(--outline);
+    border:     1px solid var(--outline);
     box-shadow: 3px 3px var(--shadow) }
 
 button          { cursor: pointer; }
-button:disabled { cursor: not-allowed }
+/* button:disabled { cursor: not-allowed } */
+button:disabled,
+button.square:disabled
+  { color: var(--muted) }
 
-button.linkish { border: 0 }
+select:hover,
+details:hover,
+input:read-write:hover,
+button:enabled:hover
+  { border-color: var(--produced) }
 
 
-header .dismiss { float: right; margin-top: 0; margin-bottom: 0 }
+button.linkish
+  { border: 0 }
+
+
+header .dismiss
+  { float: right; margin-top: 0; margin-bottom: 0 }
 
 
 details.select-bundle > summary,
 details.select-bundle > .loadable-bundle a
-  { padding-right: 3ch; display: block }
+  { padding-right: 2ch; display: block }
 details.select-bundle > summary
   { background: no-repeat center right 6px / 2ch var(--chevron-open) }
 details.select-bundle > .loadable-bundle a.active
-  { background: no-repeat center right 6px / 2ch var(--chevron-hover) }
+  { background: no-repeat center right 6px / 2ch var(--chevron-active) }
 @media (pointer: fine)
-  { details.select-bundle > .loadable-bundle a:hover
+  { details.select-bundle > .loadable-bundle a.inactive:hover
     { background: no-repeat center right 6px / 2ch var(--chevron-hover) } }
-
 
 details.select-bundle
   { padding: 0 }
@@ -121,8 +152,21 @@ details.select-bundle ol.load-order
   { padding: 6px 9px }
 details.select-bundle > summary
   { list-style: none }
-details.select-bundle[open] > summary
-  { border-bottom: 1px solid var(--outline) }
+details.select-bundle > summary > *
+  { overflow:      hidden;
+    text-overflow: ellipsis;
+    white-space:   nowrap }
+details .loadable-bundle
+  { border-top: 1px dashed var(--outline) }
+details .loadable-bundle:has(a.active)
+  { background-color: var(--station-item);
+               color: var(--station-text);
+             --muted: var(--station-muted);
+          --linkline: var(--station-light); }
+
+*:has( ~ [open]),
+details.select-bundle[open] ~ *
+  { display: none }
 
 ol.load-order li
   { display: inline }
@@ -131,6 +175,9 @@ ol.load-order li:not(:first-child)::before
   font-style: italic;
        color: var(--muted);
    font-size: 80% }
+
+.loadable-bundle a
+  { text-decoration-skip-ink: none }
 
 
 input[inputmode=decimal] { text-align: right }
@@ -152,9 +199,6 @@ a.wiki-link:not(:hover),
 a.identifier:not(:hover),
 a.mod:not(:hover)
   { text-decoration: none }
-
-.loadable-bundle a
-  { text-decoration-skip-ink: none }
 
 
 .process .needs-recipe
@@ -182,10 +226,13 @@ a.mod:not(:hover)
 /*   time station sprite */
 
 .item
-  { display: flex }
+  { display: flex; overflow: hidden }
 
 .item > *
-  { flex: 0 1 auto; align-self: baseline }
+/* I'm losing my mind setting the flex-basis here ...
+ * `auto` will cause .taglist not to wrap or line break properly */
+  {       flex: 0 0 min-content;
+    align-self: baseline }
 
 .item > .decoration
   { align-self: stretch;
@@ -226,6 +273,12 @@ a.mod:not(:hover)
 .item.random + .random-list
   { margin-left: 1ch }
 
+.item p
+  { margin: 0 }
+
+.item > span
+  { word-wrap: break-word;
+    min-width: 0; }
 
 /* colors */
 
@@ -293,7 +346,7 @@ a.mod:not(:hover)
   { background-color: var(--produced) }
 
 
-.identifier, .mod
+.identifier, .mod, pre, .tt
   { font: 80% 'IBM Plex Mono', monospace }
 
 .identifier
@@ -308,16 +361,25 @@ a.mod:not(:hover)
 
 
 .ctl
+  {         display: flex;
+           grid-gap: .5ch;
+    justify-content: end;
+        align-items: center; }
+.ctl input, .ctl button
+  { align-self: stretch; }
+.ctl-sticky
   { position: sticky;
       bottom: 10px;
-     z-index: 1;
-     display: flex }
+     z-index: 1 }
+.ctl-wrap
+  { flex-wrap: wrap }
 
-.ctl { grid-gap: .5ch }
+.ctl p
+  { margin: 6px 0px }
 
 /* messes with the surrogate hack because buttons are taller than inputs for
  * some reason */
-.ctl button { line-height: 0 }
+/* .ctl button { line-height: 0 } */
 
 .surrogate
   { display: none; visibility: hidden }
@@ -328,14 +390,17 @@ a.mod:not(:hover)
     .ctl[data-fixed] + .surrogate
       { display: block } }
 
-.ctl > * { flex: 0 0 auto }
-.ctl > .search { flex: 1 1 min-content; min-width: 0 }
+.ctl > *
+  { flex: 0 0  }
+.ctl > details[open],
+.ctl > .ctl-main-item
+  { flex: 1 1 min-content; min-width: 0 }
 
 
 .ctl .context-search
   { display: flex;
     padding: 0;
-    width: 40px }
+    min-width: 40px }
 
 
 .ctl .context-search
