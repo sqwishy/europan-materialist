@@ -2,3 +2,4 @@ misc
 __pycache__
 *.egg-info
 scrap
+Cargo.lock

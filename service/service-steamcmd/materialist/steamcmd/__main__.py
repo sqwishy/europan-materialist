@@ -14,6 +14,7 @@ use in podman:
   podman build -f Containerfile --tag materialist-steamcmd
   podman run \
           --image-volume=tmpfs \
+          -v /tmp/materialist-steamcmd:/tmp/materialist-steamcmd \
           -v /run/user/1000/podman:/run/podman \
           --rm -it materialist-steamcmd
 """
@@ -64,10 +65,6 @@ TAR_REPRODUCIBLE = [
     "--mtime=UTC 2000-1-1",
 ]
 
-# RUN_DIR = Path("/var/run/materialist-steamcmd")
-RUN_DIR = Path("/tmp/materialist-steamcmd")
-SCRATCH_DIR = RUN_DIR / "scratch"
-
 FORMATS = ("tar", "tar.zstd")
 
 
@@ -90,7 +87,7 @@ class SteamApiOutputBuf(object):
         return False
 
 
-async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
+async def run_one_steamcmd(req_r, workdir, *, task_status=trio.TASK_STATUS_IGNORED):
     args = [
         "podman-remote",
         "run",
@@ -98,13 +95,8 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
         "-i",
         # This is shared with the most so we can remove the downloaded files at
         # runtime. But it does not need to be backed by a disk.
-        #
-        # FIXME Each steamcmd should have its own SCRATCH_DIR as to not collide
-        # if they each download the same thing at the same time for some stupid
-        # reason.
         "-v",
-        # f"{SCRATCH_DIR}:/root/.local/share/Steam/steamcmd/linux32/steamapps/content",
-        f"{SCRATCH_DIR}:/root/Steam/steamapps/workshop/content",
+        f"{workdir}:/root/Steam/steamapps/workshop/content",
         "steamcmd/steamcmd:alpine",
         # "+force_install_dir", "/tmp/bind",
         "+login anonymous",
@@ -139,7 +131,7 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
                     log.warn("steamcmd req_r channel closed")
                     break
 
-                itempath = SCRATCH_DIR / msg.appid / msg.itemid
+                itempath = workdir / msg.appid / msg.itemid
 
                 try:
 
@@ -173,10 +165,6 @@ async def run_one_steamcmd(req_r, *, task_status=trio.TASK_STATUS_IGNORED):
                 finally:
 
                     try:
-                        # clean up downloaded whatevers as much as possible
-                        # the file is downloaded to itempath but there's an
-                        # extra `app_602960/state_602960_602960.patch` file
-                        # that is weird and messes with things
                         await trio.to_thread.run_sync(shutil.rmtree, itempath)
                     except OSError as err:
                         log.warn("failed to clean up itempath %s: %s", itempath, err)
@@ -314,8 +302,7 @@ async def zstd_tar(tar_data: bytes) -> bytes:
 
 @asynccontextmanager
 async def lifespan(app):
-    RUN_DIR.mkdir(mode=0o770, exist_ok=True)
-    SCRATCH_DIR.mkdir(exist_ok=True)
+    app.state.args.work.mkdir(mode=0o770, exist_ok=True)
 
     async with trio.open_nursery() as nursery:
 
@@ -326,8 +313,10 @@ async def lifespan(app):
 
             log.butt("starting steamcmd in background")
             steamcmds = []
-            if app.state.args.steamcmds > 0:
-                steamcmds.append(await nursery.start(run_one_steamcmd, req_r))
+            for i in range(app.state.args.steamcmds):
+                workdir = app.state.args.work / f"{i}"
+                workdir.mkdir(mode=0o770, exist_ok=True)
+                steamcmds.append(await nursery.start(run_one_steamcmd, req_r, workdir))
             log.butt("lifespan up")
             try:
                 yield
@@ -374,6 +363,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("-n", "--steamcmds", default=1, type=int)
     parser.add_argument("-l", "--listen", action="append", type=str)
+    parser.add_argument("--work", default="/tmp/materialist-steamcmd", type=Path)
     args = parser.parse_args()
 
     log.debug(args)

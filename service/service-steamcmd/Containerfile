@@ -1,6 +1,7 @@
 FROM python:3-alpine
 
-RUN apk update && apk add podman-remote
+RUN apk update \
+ && apk add podman-remote tar zstd
 
 WORKDIR /materialist
 

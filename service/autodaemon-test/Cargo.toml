@@ -1,0 +1,9 @@
+[package]
+name = "autodaemon-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-channel = "2.5.0"
+autodaemon = { version = "0.1.0", path = "../autodaemon" }
+smol = "2.0.2"
