@@ -1,6 +1,6 @@
 FROM node:current-alpine
 
-WORKDIR /publish/web
+WORKDIR /splicer/web
 
 ADD web/package.json \
     web/package-lock.json \
@@ -11,7 +11,7 @@ ADD web/index.html \
     web/tsconfig.json \
     web/vite.config.js \
     ../../.git-commit-hash \
-    build.sh \
+    ./build-deploy.sh \
     .
 ADD web/src src
 ADD web/public public
@@ -24,6 +24,6 @@ RUN npm install -g wrangler
 
 RUN rm -rf /root/.npm
 
-ENTRYPOINT ["/publish/web/baro-publish.sh"]
+ENTRYPOINT ["/splicer/web/build-deploy.sh"]
 
 # vim: syntax=dockerfile
