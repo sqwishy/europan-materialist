@@ -1,0 +1,5 @@
+name = "materialist-proxy-test"
+compatibility_date = "2025-10-04"
+
+[observability.logs]
+enabled = true

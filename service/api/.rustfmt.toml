@@ -1,0 +1,10 @@
+max_width=88
+# if I raise this beyond 76, rustfmt complaints that it's > than max_width,
+# even though 77 < 88. rustfmt fucking sucks
+struct_lit_width=76
+struct_variant_width=76
+match_arm_leading_pipes="Preserve"
+# I have to use nightly for this???
+# enum_discrim_align_threshold=8
+# struct_field_align_threshold=8
+# edition='2018'

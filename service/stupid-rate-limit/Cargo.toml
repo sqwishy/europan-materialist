@@ -1,0 +1,12 @@
+[package]
+name = "stupid-rate-limit"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "meme"
+
+# [profile.release]
+# debug = "line-tables-only"
+
+[dependencies]

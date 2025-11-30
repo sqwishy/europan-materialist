@@ -1,0 +1,129 @@
+form
+  { display: flex; grid-gap: .5ch }
+input.workshopid
+  { width: 100% }
+
+.author
+  {}
+
+.item > .version
+  { min-width: 9ch }
+.item > .clicky
+  { min-width: 3ch; justify-content: end }
+
+/* no longer needed? TODO test more */
+/* .ctl button { line-height: 1 } */
+
+.breadcrumb > *:not(:first-child)
+  { margin-left: 4px }
+
+section > div.is-selected
+  { box-shadow: 3px 3px var(--shadow) }
+section > div.is-selected > .item
+  { border-color: var(--mod) }
+
+button:disabled,
+button.square:disabled
+  { color: var(--muted) }
+
+input:read-write:hover,
+button:enabled:hover,
+button.linkish:enabled:hover,
+button.toggle.square:enabled:hover,
+button.square.square:enabled:hover
+  { border-color: var(--mod) }
+
+.clicky
+  { display: flex; grid-gap: 0.5ch }
+
+button.toggle.square,
+button.radio.square
+  {        translate: 0; /* pixel snapping ... */
+           font-size: small;
+          text-align: center;
+               width: 18px;
+              height: 18px;
+              /* margin: 2px 6px; */
+    background-color: var(--item);
+          box-shadow: 2px 2px var(--shadow);
+              border: 2px solid var(--shadow) }
+button.toggle.square.is-checked,
+button.radio.square.is-checked
+  { background-color: var(--muted);
+        border-color: var(--muted);
+     background-clip: content-box;
+             padding: 1.5px }
+button.radio.square
+  { border-radius: 50% }
+
+
+/* is this in use? */
+button.item
+  { width: 100% }
+
+
+button.linkish.narrow
+  { padding:    1px 6px;
+    margin:     -2px 0 -2px 0;
+    font-size:  smaller;
+    font-style: italic;
+    box-sizing: content-box;
+    border:     1px solid var(--outline);
+    box-shadow: 2px 2px var(--shadow) }
+
+
+.item > .nowrap.workshopid
+  { direction: rtl /* seems to put the ellipsis at the front, very epic */ }
+
+
+/* loading stuff is complicated */
+
+/* .loading with a .loading following it animates the whole thing  */
+/* .loading without a .loading following it animates the top */
+/* .success with a .loading following it will animate the bottom */
+.item.success:has(+ .item.loading) > .decoration,
+.item.loading > .decoration
+  { animation: loading 1.0s cubic-bezier(0.83, 0, 0.17, 1) infinite }
+/* a separate animation name causes the animation state to reset,
+ * so that it starts over at the beginning.
+ *
+ * this is done so that when you have a
+ * .loading turn into .success and the sibling immediately after it
+ * starts .loading, they animate at the same point and stay in sync.
+ *
+ * this is necessary because the bottom part of .success is still
+ * animating the top part of the funny wedge decoration on the sibling
+ * .loading item beneath it, so they need to be in sync */
+.item.success:has(+ .item.loading) > .decoration
+  { animation-name: loading_ }
+
+.item.error > .decoration
+  { background-color: var(--consumed) }
+
+/* .success top ... */
+.item.success > .decoration
+  { background-image: linear-gradient(to right, #ffffff00, #ffffff20 50%, #ffffff00 50%),
+                      linear-gradient(to bottom,
+                                      var(--produced),
+                                      var(--produced) var(--tail-wing),
+                                      transparent     var(--tail-wing)) }
+/* ... or color the whole thing when the last child or followed by another .success */
+.item.success:last-child > .decoration,
+.item.success:has(+ .item.success) > .decoration
+  { background-color: var(--produced); }
+
+.item.loading:has(+ .item:not(.loading)) > .decoration
+  { background-image: linear-gradient(to right, #ffffff00, #ffffff20 50%, #ffffff00 50%),
+                      linear-gradient(to bottom,
+                                      transparent,
+                                      transparent     var(--tail-wing),
+                                      var(--outline)  var(--tail-wing)) }
+@keyframes loading {
+    0% { background-color: var(--outline); }
+   50% { background-color: var(--produced); }
+  100% { background-color: var(--outline); } }
+
+@keyframes loading_ {
+    0% { background-color: var(--outline); }
+   50% { background-color: var(--produced); }
+  100% { background-color: var(--outline); } }

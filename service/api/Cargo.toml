@@ -1,0 +1,33 @@
+[package]
+name = "europan-materialist"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+thiserror = "2.0.17"
+
+# tokio slop
+tokio = { version = "1.47.1", features = ["macros", "net", "process", "rt", "signal", "sync"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["default-tls", "json"] }
+axum = { version = "0.8.6", default-features = false, features = ["form", "http1", "macros", "query", "tokio"] }
+jiff = { version = "0.2.15", default-features = false, features = ["std", "alloc", "tz-system", "tzdb-zoneinfo", "tz-fat"] }
+rusqlite = { version = "0.37.0", default-features = false, features = ["jiff"] }
+async-channel = "2.5.0"
+libsystemd-sys = { version = "0.9.4", default-features = false, features = ["journal"] }
+libc = "0.2.176"
+serde_json = "1.0.145"
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+bytes = { version = "1.10.1", default-features = false }
+dom_query = { version = "0.23.1", default-features = false }
+base64 = { version = "0.22.1", default-features = false }
+tower-http = { version = "0.6.6", features = ["fs"] }
+async-compression = { version = "0.4.32", features = ["tokio", "zstd"] }
+zstd = { version = "0.13.3", default-features = false }
+erased-serde = "0.4.9"
+kanal = { version = "0.1.1", path = "vendor/kanal" }
+futures-lite = { version = "2.6.1", default-features = false }
+toml = { version = "0.9.8", default-features = false, features = ["display", "parse", "serde", "std"] }
+
+autodaemon = { version = "0.1.0", path = "../autodaemon" }
+stupid-rate-limit = { version = "0.1.0", path = "../stupid-rate-limit" }

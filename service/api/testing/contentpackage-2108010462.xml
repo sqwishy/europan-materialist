@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<contentpackage name="XanMonsters" path="Mods/XanMonsters/filelist.xml" corepackage="false" gameversion="0.12.0.3" steamworkshopid="2108010462" installtime="1614550620">
+  <RandomEvents file="Mods/XanMonsters/Xanevents.xml" />
+  <Missions file="Mods/XanMonsters/Xanmissions.xml" />
+  <Character file="Mods/XanMonsters/Characters/Carrierleviathan/Carrierleviathan.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskhammerspawn/Huskhammerspawn.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskslasher/Huskslasher.xml" />
+  <Character file="Mods/XanMonsters/Characters/Juggernaut/Juggernaut.xml" />
+  <Text file="Mods/XanMonsters/Texts/English.xml" />
+  <Character file="Mods/XanMonsters/Characters/Endwormre/Endwormre.xml" />
+  <Character file="Mods/XanMonsters/Characters/Helmetcrablet/Helmetcrablet.xml" />
+  <Character file="Mods/XanMonsters/Characters/Paralyser/Paralyser.xml" />
+  <Character file="Mods/XanMonsters/Characters/CoelanthRe/Coelanthre.xml" />
+  <Character file="Mods/XanMonsters/Characters/Crawlercrablet/Crawlercrablet.xml" />
+  <Character file="Mods/XanMonsters/Characters/Bomber/Bomber.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskbroodemperor/Huskbroodemperor.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskbroodmother/Huskbroodmother.xml" />
+  <LocationTypes file="Mods/XanMonsters/Map/LocationTypes.xml" />
+  <None file="Mods/XanMonsters/Map/GeneralAtlas.png" />
+  <Character file="Mods/XanMonsters/Characters/Carrier/Carrier.xml" />
+  <Item file="Mods/XanMonsters/Items/Generalitems.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskartifactfaraday/Huskartifactfaraday.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskartifactthermal/Huskartifactthermal.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskartifactnasonov/Huskartifactnasonov.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskartifactpsychosis/Huskartifactpsychosis.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskartifactskyholder/Huskartifactskyholder.xml" />
+  <Afflictions file="Mods/XanMonsters/XanAffliction.xml" />
+  <Character file="Mods/XanMonsters/Characters/Helmetjumplet/Helmetjumplet.xml" />
+  <Character file="Mods/XanMonsters/Characters/Crawlerjumplet/Crawlerjumplet.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskartifactgeneral/Huskartifactgeneral.xml" />
+  <Character file="Mods/XanMonsters/Characters/Huskinfector/Huskinfector.xml" />
+</contentpackage>

@@ -1,0 +1,22 @@
+{
+  "name": "europan-materialist-splicer",
+  "version": "0.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {},
+  "author": "sqwishy <somebody@froghat.ca>",
+  "license": "CC0 1.0",
+  "devDependencies": {
+    "babel-preset-solid": "^1.8.4",
+    "typescript": "^5.2.2",
+    "unplugin-icons": "^22.5.0",
+    "vite": "^7.2.2",
+    "vite-plugin-solid": "^2.7.0"
+  },
+  "dependencies": {
+    "@iconify-json/ph": "^1.2.2",
+    "@solidjs/router": "^0.15.3",
+    "solid-js": "^1.8.5",
+    "zod": "^4.1.12"
+  }
+}

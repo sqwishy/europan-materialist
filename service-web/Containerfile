@@ -1,0 +1,29 @@
+FROM node:current-alpine
+
+WORKDIR /publish/web
+
+ADD web/package.json \
+    web/package-lock.json \
+    .
+RUN npm install
+
+ADD web/index.html \
+    web/tsconfig.json \
+    web/vite.config.js \
+    ../../.git-commit-hash \
+    build.sh \
+    .
+ADD web/src src
+ADD web/public public
+ADD web/assets/fonts.css \
+    web/assets/palette.css \
+    web/assets/style.css \
+    assets
+
+RUN npm install -g wrangler
+
+RUN rm -rf /root/.npm
+
+ENTRYPOINT ["/publish/web/baro-publish.sh"]
+
+# vim: syntax=dockerfile
