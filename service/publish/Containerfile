@@ -5,7 +5,7 @@ WORKDIR /publish/web
 RUN apk update \
  && apk add --no-cache python3 py3-lxml # py3-pillow
 
-ADD baro-data/baro-data.py \
+ADD ../../baro-data/baro-data.py \
     baro-publish.sh \
     .
 
