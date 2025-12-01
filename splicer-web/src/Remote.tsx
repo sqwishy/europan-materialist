@@ -163,12 +163,22 @@ export const requestRefreshItem = async (
 		throw await errForResponse(res)
 
 	/* this endpoint returns 303 if it finds a workshop item,
-	 * or 200 (no redirect) for a collection  */
-	if (res.redirected)
-		return WorkshopItem.parse(await res.json())
+	 * or 200 (no redirect) for a collection
+	 * ... but we can't rely on that here because the proxy
+	 * follow the redirect itself will eat it */
+	const obj = await res.json()
+
+	if ("collection" in obj)
+		return WorkshopCollection.parse(obj)
 
 	else
-		return WorkshopCollection.parse(await res.json())
+		return WorkshopItem.parse(obj)
+
+	// if (res.redirected)
+	// 	return WorkshopItem.parse(await res.json())
+
+	// else
+	// 	return WorkshopCollection.parse(await res.json())
 }
 
 

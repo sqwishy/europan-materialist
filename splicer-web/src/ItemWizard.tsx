@@ -71,7 +71,7 @@ export const View = (params: Params) => {
 	})
 
 	createEffect(() => {
-		const w = workshopItemRefresh?.loaded()
+		const w = workshopItemRefresh.loaded()
 		if (w && !("collection" in w))
 			workshopItemVersions.refetch()
 	})
@@ -203,7 +203,7 @@ export const View = (params: Params) => {
 					</div>
 				</Match>
 
-				<Match when={workshopItemVersions.error() || workshopItemRefresh.error()}>
+				<Match when={workshopItemRefresh.error() || workshopItemVersions.error()}>
 					{err =>
 						<>
 						<Misc.ErrorItems title={params.workshopid} err={err()} />
