@@ -53,7 +53,7 @@ export const unreachable = (_: never) => {}
 export const dbg =
 	<T,>(v: T): T => (console.log(v), v)
 
-export const zzz =
+export const zzzMs =
 	(n: number) => new Promise(ok => setTimeout(ok, n))
 
 export const nanToZero =

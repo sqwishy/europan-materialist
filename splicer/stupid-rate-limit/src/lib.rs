@@ -19,21 +19,27 @@ impl<T: Ord + Sized> Rated<T> {
         self.map.len()
     }
 
-    pub fn entry_len(&self) -> usize {
-        self.opt.length
+    pub fn options(&self) -> &Options {
+        &self.opt
     }
 
-    pub fn entry_size(&self) -> usize {
-        core::mem::size_of::<Entry>().saturating_add(
-            self.opt
-                .length
-                .saturating_mul(core::mem::size_of::<usize>()),
-        )
+    pub fn entry_sum(&mut self, key: &T) -> Option<Ticket> {
+        let e = self.map.get_mut(key)?;
+        e.upkeep(Instant::now(), &self.opt);
+        e.sum()
     }
 
-    pub fn sum(&mut self, key: T) -> Option<Ticket> {
-        self.map.get(&key).and_then(|e| e.sum())
-    }
+    // pub fn entry_len(&self) -> usize {
+    //     self.opt.length
+    // }
+
+    // pub fn entry_size(&self) -> usize {
+    //     core::mem::size_of::<Entry>().saturating_add(
+    //         self.opt
+    //             .length
+    //             .saturating_mul(core::mem::size_of::<usize>()),
+    //     )
+    // }
 
     pub fn add(&mut self, key: T, value: Ticket) -> Result<(), OverLimit> {
         self.add_this_instant(key, value, Instant::now())
@@ -258,18 +264,4 @@ fn test_retain() {
 
     assert_eq!(r.add_this_instant("b", 1, now + 3 * SEC), Ok(()));
     assert_eq!(r.len(), 1);
-}
-
-#[test]
-fn test_smol_interval() {
-    let r = Options {
-        interval: Duration::from_millis(100),
-        length: 600,
-        capacity: 9,
-        ..Options::default()
-    }
-    .build::<u8>();
-
-    assert_eq!(r.entry_len(), 600);
-    assert_eq!(r.entry_size(), 56 + 4800);
 }

@@ -84,10 +84,12 @@ footer > div
 .muted { color: var(--muted) }
 .smol { font-size: smaller }
 .caps { font-variant-caps: small-caps }
-.nowrap
+.nowrap, .nowrap-rtl
   { overflow:      hidden;
     text-overflow: ellipsis;
     white-space:   nowrap }
+.nowrap-rtl
+  { direction: rtl /* aligns right & seems to put the ellipsis at the front? */ }
 
 
 a, input, button, select

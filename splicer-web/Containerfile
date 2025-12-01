@@ -1,23 +1,30 @@
+# This is expected to be _built_ with the project root as the context directory.
+#
+# Either of these:
+#   podman build -f splicer-web/Containerfile .
+#   git archive HEAD | podman build -f splicer-web/Containerfile -
+
 FROM node:current-alpine
 
 WORKDIR /splicer/web
 
-ADD web/package.json \
-    web/package-lock.json \
+ADD splicer-web/package.json \
+    splicer-web/package-lock.json \
     .
 RUN npm install
 
-ADD web/index.html \
-    web/tsconfig.json \
-    web/vite.config.js \
-    ../../.git-commit-hash \
-    ./build-deploy.sh \
+ADD splicer-web/index.html \
+    splicer-web/tsconfig.json \
+    splicer-web/vite.config.js \
+    splicer-web/build-deploy.sh \
+    .git-commit-hash \
     .
-ADD web/src src
-ADD web/public public
-ADD web/assets/fonts.css \
-    web/assets/palette.css \
-    web/assets/style.css \
+ADD splicer-web/src src
+ADD splicer-web/public public
+ADD splicer-web/assets/fonts.css \
+    splicer-web/assets/palette.css \
+    splicer-web/assets/style.css \
+    splicer-web/assets/splicer.css \
     assets
 
 RUN npm install -g wrangler

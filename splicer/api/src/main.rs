@@ -47,6 +47,7 @@ pub struct Config {
     // pub deploy_url: String,
     #[serde(with = "crate::no_args::duration_ms")]
     pub wait_on_publish_poll_interval: Duration,
+    pub response_headers: crate::no_args::headers::ExtraHeaders,
 }
 
 impl Default for Config {
@@ -67,6 +68,23 @@ impl Default for Config {
             deploy_site: "materialist-next".to_string(),
             // deploy_url: "https://materialist-next.pages.dev/".to_string(),
             wait_on_publish_poll_interval: Duration::from_millis(500),
+            response_headers: Default::default(),
+            // response_headers: no_args::headers::ExtraHeaders(vec![
+            //     (
+            //         axum::http::header::HeaderName::from_static(
+            //             "access-control-allow-origin",
+            //         ),
+            //         axum::http::header::HeaderValue::from_static(
+            //             "https://materialist-splicer.pages.dev",
+            //         ),
+            //     ),
+            //     (
+            //         axum::http::header::HeaderName::from_static(
+            //             "access-control-allow-methods",
+            //         ),
+            //         axum::http::header::HeaderValue::from_static("POST, GET, OPTIONS"),
+            //     ),
+            // ]),
         }
     }
 }
@@ -766,8 +784,9 @@ pub mod www {
             /* ROUTES */
 
             let app = Router::new()
+                .route("/ping/", get(ping))
                 .route("/workshop-item/", get(list))
-                .route("/workshop-item/refresh/", post(refresh_workshop_item))
+                .route("/workshop-item/", post(refresh_workshop_item))
                 // .route("/workshop-item/refresh/{id}/", post(refresh_workshop_item))
                 .route("/workshop-item/{pk}/", get(workshop_item_by_pk))
                 .route(
@@ -783,7 +802,6 @@ pub mod www {
                 .route("/x/workshop-item/{pk}/file/", get(get_workshop_item_file))
                 .route("/x/build/{pk}/fragment/", get(get_build_fragment))
                 .route("/x/republish/", post(republish))
-                .layer(Extension(Arc::clone(&self.cfg)))
                 .layer(Extension(self.podman))
                 .layer(Extension(self.steamcmd))
                 .layer(Extension(self.steamweb))
@@ -792,6 +810,8 @@ pub mod www {
                 .layer(Extension(tasks.clone()))
                 // .layer(Extension(FragmentBuildTasks::new()))
                 .layer(Extension(RateLimit::new()))
+                .layer(axum::middleware::from_fn(config_headers))
+                .layer(Extension(Arc::clone(&self.cfg)))
                 .layer(axum::middleware::from_fn(log_stuff));
 
             let mut serve = tokio::task::spawn(async move {
@@ -840,6 +860,18 @@ pub mod www {
 
             Ok(())
         }
+    }
+
+    async fn config_headers(
+        Extension(cfg): Extension<Arc<Config>>,
+        request: axum::extract::Request,
+        next: axum::middleware::Next,
+    ) -> Response {
+        let mut response = next.run(request).await;
+        response
+            .headers_mut()
+            .extend(cfg.response_headers.0.iter().cloned());
+        response
     }
 
     async fn log_stuff(
@@ -945,6 +977,11 @@ pub mod www {
                 Ok(())
             }
         }
+
+        async fn read(&self) -> Option<stupid_rate_limit::Ticket> {
+            let RateLimited(mutex, ip) = self;
+            mutex.lock().await.entry_sum(ip.as_ref()?)
+        }
     }
 
     use axum::extract::FromRequestParts;
@@ -972,16 +1009,13 @@ pub mod www {
                 .await
                 .map_err(|err| err.into_response())?;
 
+            dbg!(&headers);
+
             Ok(RateLimited(rate, remote_ip(&headers)))
         }
     }
 
     fn remote_ip(hs: &HeaderMap) -> Option<IpAddr> {
-        // const CF_CONNECTING_IP: HeaderName = //
-        //     HeaderName::from_static("cf-connecting-ip");
-        // const X_FORWARDED_FOR: HeaderName = //
-        //     HeaderName::from_static("x-forwarded-for");
-
         for header in [
             HeaderName::from_static("cf-connecting-ip"),
             HeaderName::from_static("x-forwarded-for"),
@@ -1005,11 +1039,22 @@ pub mod www {
         None
     }
 
+    // #[test]
+    // fn test_remote_ip() {
+    // }
+
     // const COST_BUILD: stupid_rate_limit::Ticket = 1;
     const COST_DOWNLOAD: stupid_rate_limit::Ticket = 1;
     const COST_WORKSHOP: stupid_rate_limit::Ticket = 1;
 
     /* request handlers? */
+
+    async fn ping(rate: RateLimited) -> Response {
+        match rate.read().await {
+            Some(v) => v.to_string().into_response(),
+            None => "pong".into_response(),
+        }
+    }
 
     async fn get_build(
         Path(pk): Path<i64>,

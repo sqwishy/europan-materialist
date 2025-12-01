@@ -14,8 +14,14 @@ input.workshopid
 /* no longer needed? TODO test more */
 /* .ctl button { line-height: 1 } */
 
-.breadcrumb > *:not(:first-child)
+header > p
+	{ display: flex }
+header > p > .breadcrumb
+	{ flex-grow: 1 }
+header > p > .breadcrumb > *:not(:first-child)
   { margin-left: 4px }
+/* header > p > .connection-status */
+/* 	{ max-width: 12ch } */
 
 section > div.is-selected
   { box-shadow: 3px 3px var(--shadow) }
@@ -70,10 +76,6 @@ button.linkish.narrow
     box-sizing: content-box;
     border:     1px solid var(--outline);
     box-shadow: 2px 2px var(--shadow) }
-
-
-.item > .nowrap.workshopid
-  { direction: rtl /* seems to put the ellipsis at the front, very epic */ }
 
 
 /* loading stuff is complicated */

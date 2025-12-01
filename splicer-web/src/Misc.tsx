@@ -1,5 +1,7 @@
 import { Switch, Match } from "solid-js";
 
+import { z } from "zod"
+
 import { ResponseDetails } from "./Remote";
 
 
@@ -15,7 +17,7 @@ export const ErrorItems = (params: { title: string, err: any }) => {
 		<>
 		<div class="item error stations">
 			<span class="no-decoration"></span>
-			<span class="what"><b>{params.title}</b></span>
+			<span class="what nowrap-rtl" title={params.title}><b>{params.title}</b></span>
 		</div>
 		<div class="item error">
 			<span class="decoration"></span>
@@ -23,13 +25,16 @@ export const ErrorItems = (params: { title: string, err: any }) => {
 				<Match when={params.err.cause as ResponseDetails}>
 					{err =>
 						<>
-						<span class="what">{err().body}</span>
+						<span class="comfy">{err().body}</span>
 						<span class="smol">{err().code} <b>{err().status}</b></span>
 						</>
 					}
 				</Match>
+				<Match when={params.err instanceof z.ZodError}>
+					<span class="comfy pre">{z.prettifyError(err() as z.ZodError)}</span>
+				</Match>
 				<Match when={true}>
-					<span class="what">{params.err.toString()}</span>
+					<span class="comfy">{params.err.toString()}</span>
 				</Match>
 			</Switch>
 		</div>

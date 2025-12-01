@@ -1,7 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, format_err};
+use anyhow::{format_err, Context};
 
 use crate::ansi;
 
@@ -160,7 +160,7 @@ pub mod duration_ms {
 }
 
 pub mod opt_duration_ms {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer, de, de::Visitor};
+    use serde::{de, de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
     use std::{fmt, time::Duration};
 
     pub fn serialize<S>(o: &Option<Duration>, er: S) -> Result<S::Ok, S::Error>
@@ -212,7 +212,6 @@ pub mod opt_duration_ms {
                 "never" => Ok(Never),
                 s => Err(de::Error::invalid_value(de::Unexpected::Str(s), &"never")),
             }
-            // deserializer.deserialize_str(Never)
         }
     }
 
@@ -257,6 +256,61 @@ pub mod opt_duration_ms {
             assert_eq!(Thing { value }, toml::from_str(&s).unwrap());
 
             assert!(toml::from_str::<Thing>(&"value = \"potato\"").is_err());
+        }
+    }
+}
+
+pub mod headers {
+    use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
+    use std::{fmt, time::Duration};
+
+    use axum::http::header::{HeaderName, HeaderValue};
+
+    #[derive(Default, Debug)]
+    pub struct ExtraHeaders(pub Vec<(HeaderName, HeaderValue)>);
+
+    impl Serialize for ExtraHeaders {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            self.0
+                .iter()
+                .map(|(n, v)| {
+                    Ok((
+                        n.as_str().to_string(), /**/
+                        v.to_str().map(toml::Value::from)?,
+                    ))
+                })
+                .collect::<Result<toml::Table, axum::http::header::ToStrError>>()
+                .map_err(ser::Error::custom)
+                .and_then(|table| table.serialize(serializer))
+        }
+    }
+
+    impl<'de> Deserialize<'de> for ExtraHeaders {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            return toml::Table::deserialize(deserializer)?
+                .into_iter()
+                .map(|(k, v)| {
+                    Ok((
+                        k.parse().map_err(de::Error::custom)?,
+                        v.as_str()
+                            .ok_or_else(|| {
+                                de::Error::invalid_type(
+                                    de::Unexpected::Other("not a string"),
+                                    &"string",
+                                )
+                            })?
+                            .parse()
+                            .map_err(de::Error::custom)?,
+                    ))
+                })
+                .collect::<Result<_, _>>()
+                .map(ExtraHeaders);
         }
     }
 }

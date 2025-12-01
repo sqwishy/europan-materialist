@@ -6,7 +6,7 @@ import { useParams, useLocation, useNavigate } from "@solidjs/router";
 import { z } from "zod"
 
 import { createRemotes, wrapResource } from "./Remote";
-import { workshopUrl, loadedResource, requestDownloadVersion, requestSubmitBuild } from "./Remote";
+import { workshopUrl, requestSubmitBuild, requestPing } from "./Remote";
 import * as F from "./F";
 import * as ItemWizard from "./ItemWizard";
 import * as Misc from "./Misc";
@@ -33,6 +33,13 @@ export const BuildNew = () => {
 		name: "",
 		items: [],
 		showOutput: false,
+	})
+
+	const ping = wrapResource(createResource(requestPing));
+
+	createEffect(() => {
+		if (!ping.isLoading())
+			setTimeout(ping.refetch, 30000)
 	})
 
 	///
@@ -179,20 +186,37 @@ export const BuildNew = () => {
 	return (
 		<>
 			<header>
-				<p class="smol muted breadcrumb">
-					<span><a href="/">root</a></span>
-					<span class="tt">/</span>
-					<Switch>
-						<Match when={!getBuild()}>
-							<span>new load order</span>
-						</Match>
-						<Match when={getBuild()?.loaded()}>
-							{b => <span>{b().pk}</span>}
-						</Match>
-						<Match when={true}>
-							<span>...</span>
-						</Match>
-					</Switch>
+				<p>
+					<span class="smol muted breadcrumb">
+						<span><a href="/">root</a></span>
+						<span class="tt">/</span>
+						<Switch>
+							<Match when={!getBuild()}>
+								<span>new load order</span>
+							</Match>
+							<Match when={getBuild()?.loaded()}>
+								{b => <span>{b().pk}</span>}
+							</Match>
+							<Match when={true}>
+								<span>...</span>
+							</Match>
+						</Switch>
+					</span>
+					<span class="smol connection-status muted">
+						<button class="linkish" title="refresh" onclick={() => ping.refetch()}>
+							<Switch>
+								<Match when={ping.last()}>
+									online
+								</Match>
+								<Match when={ping.hasError()}>
+									offline
+								</Match>
+								<Match when={ping.isLoading()}>
+									...
+								</Match>
+							</Switch>
+						</button>
+					</span>
 				</p>
 			</header>
 

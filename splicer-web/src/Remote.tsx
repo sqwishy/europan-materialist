@@ -9,7 +9,7 @@ import * as F from "./F";
 export type ResponseDetails = { code: number, status: string, body: string }
 
 
-export const API = "http://10.0.69.3:8848"
+export const API = import.meta.env.VITE_API_URL || "http://10.0.69.3:8848"
 
 
 export type Resource<T> = {
@@ -202,6 +202,16 @@ export const requestWaitOnPublish = async (pk: number): Promise<PublishResult> =
 		throw await errForResponse(res)
 
 	return PublishResult.parse(await res.json())
+}
+
+
+export const requestPing = async (): Promise<string> => {
+	const res = await fetch(`${API}/ping/`)
+
+	if (!res.ok)
+		throw await errForResponse(res)
+
+	return await res.text()
 }
 
 

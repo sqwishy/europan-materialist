@@ -153,30 +153,10 @@ export const View = (params: Params) => {
 							}
 						</For>
 						<Show when={getDownload()?.error()}>
-							{err =>
-								<>
-								<div class="item error stations">
-									<span class="no-decoration"></span>
-									<span class="comfy"><b>download error!</b></span>
-								</div>
-								<div class="item error">
-									<span class="decoration"></span>
-									<Switch>
-										<Match when={err().cause as ResponseDetails}>
-											{err =>
-												<>
-												<span class="comfy">{err().body}</span>
-												<span class="smol">{err().code} <b>{err().status}</b></span>
-												</>
-											}
-										</Match>
-										<Match when={true}>
-											<span class="comfy">{err().toString()}</span>
-										</Match>
-									</Switch>
-								</div>
-								</>
-							}
+							{err => <Misc.ErrorItems title={"download error"} err={err()} />}
+						</Show>
+						<Show when={workshopItemRefresh.error()}>
+							{err => <Misc.ErrorItems title={"refresh error"} err={err()} />}
 						</Show>
 						</>
 					}
@@ -226,29 +206,7 @@ export const View = (params: Params) => {
 				<Match when={workshopItemVersions.error() || workshopItemRefresh.error()}>
 					{err =>
 						<>
-						<div class="item stations">
-							<span class="no-decoration"></span>
-						<span class="nowrap workshopid" title={params.workshopid}>{params.workshopid}</span>
-						</div>
-						<div class="item error">
-							<span class="decoration"></span>
-							<Switch>
-								<Match when={err().cause as ResponseDetails}>
-									{err =>
-										<>
-										<span class="comfy">{err().body}</span>
-										<span class="smol">{err().code} <b>{err().status}</b></span>
-										</>
-									}
-								</Match>
-								<Match when={err() instanceof z.ZodError}>
-									<span class="comfy pre">{z.prettifyError(err() as z.ZodError)}</span>
-								</Match>
-								<Match when={true}>
-									<span class="comfy">{err().toString()}</span>
-								</Match>
-							</Switch>
-						</div>
+						<Misc.ErrorItems title={params.workshopid} err={err()} />
 						<div class="item error">
 							<span class="decoration"></span>
 							<span class="clicky">
