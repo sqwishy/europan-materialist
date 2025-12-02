@@ -4,7 +4,6 @@ export const Landing = () => {
 		<header>
 			<p class="smol muted breadcrumb">
 				<span><a href="/">root</a></span>
-				<span class="tt">/</span>
 			</p>
 		</header>
 		<main>

@@ -7,20 +7,29 @@ pub struct OverLimit;
 pub type Ticket = u16;
 
 #[derive(Debug)]
-pub struct Rated<T: Ord + Sized> {
+pub struct Rated<T: Ord + Sized + Copy> {
     map: BTreeMap<T, Entry>,
     opt: Options,
     /* optimization; invariant is min of all entries' next_upkeep */
     next_retain: Option<Instant>,
 }
 
-impl<T: Ord + Sized> Rated<T> {
+impl<T: Ord + Sized + Copy> Rated<T> {
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
     pub fn options(&self) -> &Options {
         &self.opt
+    }
+
+    pub fn entries(&mut self) -> Vec<(T, Ticket)> {
+        self._upkeep(Instant::now());
+        self.map.iter()
+            .filter_map(|(&k, v)| {
+                Some((k, v.sum()?))
+            })
+            .collect()
     }
 
     pub fn entry_sum(&mut self, key: &T) -> Option<Ticket> {
@@ -55,10 +64,7 @@ impl<T: Ord + Sized> Rated<T> {
     ) -> Result<(), OverLimit> {
         use btree_map::Entry::*;
 
-        match self.next_retain {
-            Some(moment) if moment <= now => self.map.retain(|_k, e| e.upkeep(now, &self.opt)),
-            _ => (),
-        };
+        self._upkeep(now);
 
         let entry = match self.map.entry(key) {
             Vacant(e) => e.insert(self.opt._new_entry(now)),
@@ -67,9 +73,23 @@ impl<T: Ord + Sized> Rated<T> {
 
         let r = entry.add(value, &self.opt);
 
-        self.next_retain = self.map.values().map(|e| e.next_upkeep).min();
+        self.next_retain = Some(match self.next_retain {
+            Some(v) => v.min(entry.next_upkeep),
+            None => entry.next_upkeep,
+        });
 
         r
+    }
+
+    fn _upkeep(&mut self, now: Instant) {
+        let Some(moment) = self.next_retain else {
+            return;
+        };
+
+        if moment <= now {
+            self.map.retain(|_k, e| e.upkeep(now, &self.opt));
+            self.next_retain = self.map.values().map(|e| e.next_upkeep).min();
+        }
     }
 }
 
@@ -133,6 +153,7 @@ impl Entry {
         return self.sum().unwrap_or(0) > 0;
     }
 
+    /// returns None on overflow
     fn sum(&self) -> Option<Ticket> {
         self.tickets
             .iter()
@@ -164,7 +185,7 @@ impl Default for Options {
 }
 
 impl Options {
-    pub fn build<T: Ord + Sized>(self) -> Rated<T> {
+    pub fn build<T: Ord + Sized + Copy>(self) -> Rated<T> {
         Rated {
             map: Default::default(),
             opt: self,

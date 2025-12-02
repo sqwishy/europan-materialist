@@ -48,7 +48,7 @@ export const BuildNew = () => {
 		createMemo(() => params.pk ? remotes.getBuild(params.pk) : null)
 
 	createEffect(() => {
-		let build = getBuild()?.loaded()
+		const build = getBuild()?.loaded()
 		if (!build)
 			return;
 		setModel("name", build.name)
@@ -57,6 +57,15 @@ export const BuildNew = () => {
 			build.items
 			     .map(({ workshopid, pk }) =>
 			          ({ ...ItemWizard.init(workshopid), version: pk })))
+	})
+
+	createEffect(() => {
+		let buildResource;
+		let build;
+		if (   (buildResource = getBuild())
+		    && (build = buildResource.loaded())
+			  && !(build.published))
+			setTimeout(buildResource.refetch, 5000)
 	})
 
 	///
@@ -194,7 +203,7 @@ export const BuildNew = () => {
 							<Match when={!getBuild()}>
 								<span>new load order</span>
 							</Match>
-							<Match when={getBuild()?.loaded()}>
+							<Match when={getBuild()?.last()}>
 								{b => <span>{b().pk}</span>}
 							</Match>
 							<Match when={true}>
@@ -203,13 +212,13 @@ export const BuildNew = () => {
 						</Switch>
 					</span>
 					<span class="smol connection-status muted">
-						<button class="linkish" title="refresh" onclick={() => ping.refetch()}>
+						<button class="linkish nowrap" title="refresh" onclick={() => ping.refetch()}>
 							<Switch>
 								<Match when={ping.last()}>
 									online
 								</Match>
 								<Match when={ping.hasError()}>
-									offline
+									❗ offline
 								</Match>
 								<Match when={ping.isLoading()}>
 									...
@@ -236,7 +245,7 @@ export const BuildNew = () => {
 					</form>
 				</div>
 
-				<Show when={getBuild()?.isLoading()}>
+				<Show when={!getBuild()?.last() && getBuild()?.isLoading()}>
 					<div>
 						<div class="item loading">
 							<span class="decoration"></span>
@@ -302,7 +311,7 @@ export const BuildNew = () => {
 				<div>
 					<div class="item" classList={{
 						"loading": downloadAll.isLoading(),
-						"success": !!downloadAll.loaded() || !!getBuild()?.loaded(),
+						"success": !!downloadAll.loaded() || !!getBuild()?.last(),
 					}}>
 						<span class="decoration"></span>
 						<span class="comfy"><span class="smol tt">#1</span> - download</span>
@@ -311,11 +320,11 @@ export const BuildNew = () => {
 
 					<div class="item" classList={{
 						"loading": submitBuild.isLoading(),
-						"success": !!submitBuild.loaded() || !!getBuild()?.loaded(),
+						"success": !!submitBuild.loaded() || !!getBuild()?.last(),
 					}}>
 						<span class="decoration"></span>
 						<span class="comfy"><span class="smol tt">#2</span> - build</span>
-						<Show when={getBuild()?.loaded()}>
+						<Show when={getBuild()?.last()}>
 							{b =>
 							<>
 								<span class="clicky">
@@ -337,7 +346,7 @@ export const BuildNew = () => {
 							}
 						</Show>
 					</div>
-					<Show when={model.showOutput && getBuild()?.loaded()}>
+					<Show when={model.showOutput && getBuild()?.last()}>
 						{b =>
 							<>
 							<div class="item">
@@ -379,7 +388,7 @@ export const BuildNew = () => {
 								</>
 							}
 						</Show>
-						<Show when={getBuild()?.loaded()?.published}>
+						<Show when={getBuild()?.last()?.published}>
 							{pk => <span class="smol"><Misc.PkTime pk={pk()} /></span>}
 						</Show>
 					</div>

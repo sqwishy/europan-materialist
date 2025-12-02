@@ -802,6 +802,7 @@ pub mod www {
                 .route("/x/workshop-item/{pk}/file/", get(get_workshop_item_file))
                 .route("/x/build/{pk}/fragment/", get(get_build_fragment))
                 .route("/x/republish/", post(republish))
+                .route("/x/rate-limits/", get(dump_rate_limits))
                 .layer(Extension(self.podman))
                 .layer(Extension(self.steamcmd))
                 .layer(Extension(self.steamweb))
@@ -982,6 +983,11 @@ pub mod www {
             let RateLimited(mutex, ip) = self;
             mutex.lock().await.entry_sum(ip.as_ref()?)
         }
+
+        async fn entries(&self) -> Vec<(IpAddr, stupid_rate_limit::Ticket)> {
+            let RateLimited(mutex, ip) = self;
+            mutex.lock().await.entries()
+        }
     }
 
     use axum::extract::FromRequestParts;
@@ -1008,8 +1014,6 @@ pub mod www {
                 .extract::<HeaderMap>()
                 .await
                 .map_err(|err| err.into_response())?;
-
-            dbg!(&headers);
 
             Ok(RateLimited(rate, remote_ip(&headers)))
         }
@@ -1038,10 +1042,6 @@ pub mod www {
 
         None
     }
-
-    // #[test]
-    // fn test_remote_ip() {
-    // }
 
     // const COST_BUILD: stupid_rate_limit::Ticket = 1;
     const COST_DOWNLOAD: stupid_rate_limit::Ticket = 1;
@@ -1077,6 +1077,7 @@ pub mod www {
         Extension(db): Extension<db::Client>,
         Extension(podman): Extension<podman::Client>,
         Extension(podman_for_cleanup): Extension<podman::Client>,
+        Extension(publish): Extension<Sender<publish::Msg>>,
         // Extension(build_tasks): Extension<FragmentBuildTasks>,
         body: axum::body::Body,
     ) -> Result<Response, Response> {
@@ -1318,6 +1319,12 @@ pub mod www {
             .map_err(internal_error)?;
 
             /* TODO publish request */
+            {
+                let (reply, _) = kanal::bounded_async(1);
+                if let Err(err) = publish.send(publish::Msg::Publish { reply }).await {
+                    warn!("failed to submit publish request for build"; "pk" => pk);
+                }
+            }
 
             Ok(see_other(path_for_build(pk)))
         })
@@ -1381,6 +1388,10 @@ pub mod www {
             .map(|r| r.pk)
             .map_err(too_busy)
             .and_then(json_response)
+    }
+
+    async fn dump_rate_limits(rate: RateLimited) -> Result<Response, Response> {
+        json_response(rate.entries().await)
     }
 
     #[derive(serde::Deserialize)]
@@ -3630,6 +3641,12 @@ pub(crate) mod parsing {
         assert_eq!(
             "3166241648".parse().ok(),
             workshopid_from_url(
+                "https://steamcommunity.com/workshop/filedetails/?id=3166241648"
+            )
+        );
+        assert_eq!(
+            "3166241648".parse().ok(),
+            workshopid_from_url(
                 "https://steamcommunity.com/sharedfiles/filedetails/?id=3166241648&something-wacky"
             )
         );
@@ -3889,7 +3906,12 @@ pub(crate) mod parsing {
         const PREFIX: &'static str =
             "https://steamcommunity.com/sharedfiles/filedetails/?id=";
 
-        let mut tail = url.strip_prefix(PREFIX)?;
+        const ALSO_PREFIX: &'static str =
+            "https://steamcommunity.com/workshop/filedetails/?id=";
+
+        let mut tail = url
+            .strip_prefix(PREFIX)
+            .or_else(|| url.strip_prefix(ALSO_PREFIX))?;
 
         if let Some(i) = tail.find(|c| !is_workshopid_char(c)) {
             tail = tail.get(0..i)?;

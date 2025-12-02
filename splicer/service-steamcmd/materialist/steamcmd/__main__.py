@@ -19,7 +19,7 @@ use in podman:
           --rm -it materialist-steamcmd
 """
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -29,6 +29,7 @@ import shutil
 import base64
 import tarfile
 import io
+import os
 
 # import compression.zstd
 from pathlib import Path
@@ -68,15 +69,21 @@ TAR_REPRODUCIBLE = [
 FORMATS = ("tar", "tar.zstd")
 
 
-class SteamApiOutputBuf(object):
+class SteamcmdOutputBuf(object):
     READYBYTES = b"\nSteam>\x1b[0m"
 
     def __init__(self, stdout):
         self.buf = deque(maxlen=64)
         self.stdout = stdout
 
+    def has_failure(self):
+        return b"(Failure)" in bytes(self.buf)
+
     async def read_until_ready(self):
-        """This will block if you call it while ready!"""
+        """This will block if you call it while it's already ready!
+
+        Returns False if we get EOF before reading a ready message.
+        """
         while b := await self.stdout.receive_some():
 
             log.butt(steamcmd=b)
@@ -87,7 +94,31 @@ class SteamApiOutputBuf(object):
         return False
 
 
-async def run_one_steamcmd(req_r, workdir, *, task_status=trio.TASK_STATUS_IGNORED):
+def test_buffer_read_failure():
+    import trio.testing
+
+    s, r = trio.testing.memory_stream_pair()
+    buf = SteamcmdOutputBuf(r)
+
+    success = b'\n\x1b[0mSuccess. Downloaded item 3478666406 to "/root/Steam/steamapps/workshop/content/602960/3478666406" (165113 bytes) \x1b[0m\x1b[1m\nSteam>\x1b[0m'
+    failure = b"\n\x1b[0mERROR! Download item 3045796581 failed (Failure).\x1b[0m\x1b[1m\nSteam>\x1b[0m"
+
+    @trio.run
+    async def wow():
+        await s.send_all(success)
+        with trio.fail_after(0.01):
+            assert await buf.read_until_ready()
+            assert not buf.has_failure()
+
+        await s.send_all(failure)
+        with trio.fail_after(0.01):
+            assert await buf.read_until_ready()
+            assert buf.has_failure()
+
+
+async def run_one_steamcmd(
+    req_r, workdir, image, retries, *, task_status=trio.TASK_STATUS_IGNORED
+):
     args = [
         "podman-remote",
         "run",
@@ -97,7 +128,7 @@ async def run_one_steamcmd(req_r, workdir, *, task_status=trio.TASK_STATUS_IGNOR
         # runtime. But it does not need to be backed by a disk.
         "-v",
         f"{workdir}:/root/Steam/steamapps/workshop/content",
-        "steamcmd/steamcmd:alpine",
+        image,
         # "+force_install_dir", "/tmp/bind",
         "+login anonymous",
     ]
@@ -107,14 +138,9 @@ async def run_one_steamcmd(req_r, workdir, *, task_status=trio.TASK_STATUS_IGNOR
             partial(trio.run_process, args, stdin=PIPE, stdout=PIPE, stderr=STDOUT)
         )
 
-        # # pyright ...
-        # assert isinstance(steamcmd, trio.Process)
-        # assert steamcmd.stdin
-        # assert steamcmd.stdout
-
         task_status.started(steamcmd)
 
-        buf = SteamApiOutputBuf(steamcmd.stdout)
+        buf = SteamcmdOutputBuf(steamcmd.stdout)
 
         try:
             if not await buf.read_until_ready():
@@ -122,53 +148,7 @@ async def run_one_steamcmd(req_r, workdir, *, task_status=trio.TASK_STATUS_IGNOR
             else:
                 log.info("steamcmd ready")
 
-            while True:
-
-                # if this is closed, our service is shutting down
-                try:
-                    msg: DownloadRequest = await req_r.receive()
-                except (trio.EndOfChannel, trio.ClosedResourceError):
-                    log.warn("steamcmd req_r channel closed")
-                    break
-
-                itempath = workdir / msg.appid / msg.itemid
-
-                try:
-
-                    await steamcmd.stdin.send_all(
-                        b"workshop_download_item %s %s\n"
-                        % (msg.appid.encode(), msg.itemid.encode())
-                    )
-
-                    if not await buf.read_until_ready():
-                        log.warn("steamcmd EOF during download_item")
-                        break
-
-                    try:
-                        with log.clocked("tar_path"):
-                            result: CompletedProcess = await tar_path(itempath, msg.tar_opts)
-                    except CalledProcessError as err:
-                        log.warn(
-                            "steamcmd tar failed",
-                            code=err.returncode,
-                            stderr=err.stderr,
-                        )
-                        reply = b":<"  # FIXME use a real error thingy
-                    else:
-                        reply = result.stdout
-
-                    try:
-                        msg.reply.send_nowait(reply)
-                    except trio.WouldBlock:
-                        continue
-
-                finally:
-
-                    try:
-                        await trio.to_thread.run_sync(shutil.rmtree, itempath)
-                    except OSError as err:
-                        log.warn("failed to clean up itempath %s: %s", itempath, err)
-
+            await run_steamcmd_forever(req_r, steamcmd, buf, workdir, retries)
         finally:
             with trio.move_on_after(250 * MILLIS, shield=True):
                 try:
@@ -180,11 +160,88 @@ async def run_one_steamcmd(req_r, workdir, *, task_status=trio.TASK_STATUS_IGNOR
                 r = await steamcmd.wait()
                 log.info("steamcmd exit » %s", r)
 
-            log.info("%s", bytes(buf.buf))
-
         log.info("steamcmd done!")
 
     log.info("steamcmd nursery closed!")
+
+
+async def run_steamcmd_forever(
+    req_r,
+    steamcmd,
+    buf,
+    workdir,
+    retries,
+):
+    while True:
+        try:
+            msg: DownloadRequest = await req_r.receive()
+        except (trio.EndOfChannel, trio.ClosedResourceError):
+            # if this is closed, the service is shutting down
+            break
+
+        itempath = workdir / msg.appid / msg.itemid
+
+        try:
+            reply = None
+
+            if await download_one_steamcmd(
+                steamcmd, buf, msg.appid, msg.itemid, retries=retries
+            ):
+                try:
+                    with log.clocked("tar_path"):
+                        result: CompletedProcess = await tar_path(
+                            itempath, msg.tar_opts
+                        )
+                except CalledProcessError as err:
+                    log.warn(
+                        "steamcmd tar failed", code=err.returncode, stderr=err.stderr
+                    )
+                else:
+                    reply = result.stdout
+
+            try:
+                msg.reply.send_nowait(reply)
+            except trio.WouldBlock:
+                pass
+
+        finally:
+
+            try:
+                await trio.to_thread.run_sync(rmdir, itempath)
+            except OSError as err:
+                log.warn("failed rmtree", itempath=itempath, err=err)
+            else:
+                log.butt("removed", itempath=itempath)
+
+
+async def download_one_steamcmd(
+    steamcmd, buf, appid: str, itemid: str, *, retries: int
+):
+    for tries_left in reversed(range(retries)):
+        await steamcmd.stdin.send_all(
+            b"workshop_download_item %s %s\n" % (appid.encode(), itemid.encode())
+        )
+
+        if not await buf.read_until_ready():
+            log.warn("steamcmd EOF during download_item")
+            return
+
+        if buf.has_failure():
+            if tries_left:
+                log.warn("steamcmd download failed, retrying ... %i attempts left")
+            else:
+                log.warn("steamcmd download failed, giving up")
+        else:
+            return True
+
+
+def rmdir(path):
+    fd = os.open(path, os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    shutil.rmtree(path)
 
 
 async def tar_path(path, tar_opts=()):
@@ -213,7 +270,6 @@ def prefer_wait(request):
 
 
 async def download(request):
-
     log.butt(request.path_params)
 
     if not (appid := request.path_params.get("app")):
@@ -226,14 +282,16 @@ async def download(request):
         return HTTP_NOT_FOUND
 
     exclude = request.query_params.getlist("exclude")
-    tar_opts = [s for e in exclude for s in ('--exclude', e)]
+    tar_opts = [s for e in exclude for s in ("--exclude", e)]
 
     wait = prefer_wait(request) or 0
 
     reply_s, reply_r = trio.open_memory_channel(0)
 
     async with reply_r, reply_s:
-        msg = DownloadRequest(appid=appid, itemid=itemid, tar_opts=tar_opts, reply=reply_s)
+        msg = DownloadRequest(
+            appid=appid, itemid=itemid, tar_opts=tar_opts, reply=reply_s
+        )
 
         if not wait:
             try:
@@ -262,7 +320,9 @@ async def download(request):
         with log.clocked("zstd_tar"):
             tar_data = await zstd_tar(tar_data)
 
-    return Response(tar_data, headers={"etag": f'"{etag}"', "uncompressed-size": str(size)})
+    return Response(
+        tar_data, headers={"etag": f'"{etag}"', "uncompressed-size": str(size)}
+    )
 
 
 def tar_hash_and_size(tar_data: bytes) -> tuple[str, int]:
@@ -302,7 +362,10 @@ async def zstd_tar(tar_data: bytes) -> bytes:
 
 @asynccontextmanager
 async def lifespan(app):
-    app.state.args.work.mkdir(mode=0o770, exist_ok=True)
+    image = app.state.args.image
+    retries = max(app.state.args.retries, 1)
+
+    app.state.args.workdir.mkdir(mode=0o770, exist_ok=True)
 
     async with trio.open_nursery() as nursery:
 
@@ -314,18 +377,19 @@ async def lifespan(app):
             log.butt("starting steamcmd in background")
             steamcmds = []
             for i in range(app.state.args.steamcmds):
-                workdir = app.state.args.work / f"{i}"
+                workdir = app.state.args.workdir / f"{i}"
                 workdir.mkdir(mode=0o770, exist_ok=True)
-                steamcmds.append(await nursery.start(run_one_steamcmd, req_r, workdir))
+                steamcmds.append(
+                    await nursery.start(
+                        run_one_steamcmd, req_r, workdir, image, retries
+                    )
+                )
             log.butt("lifespan up")
             try:
                 yield
             finally:
                 for r in steamcmds:
                     try:
-                        # # pyright ...
-                        # assert isinstance(r, trio.Process)
-                        # assert r.stdin
                         await r.stdin.send_all(b"\nquit\n")
                     except (trio.BrokenResourceError, trio.ClosedResourceError):
                         pass
@@ -360,10 +424,14 @@ def main():
     from materialist.core import hypercorn_config
     from hypercorn.trio import serve
 
-    parser = ArgumentParser()
-    parser.add_argument("-n", "--steamcmds", default=1, type=int)
-    parser.add_argument("-l", "--listen", action="append", type=str)
-    parser.add_argument("--work", default="/tmp/materialist-steamcmd", type=Path)
+    parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
+    # fmt: off
+    parser.add_argument("-n", "--steamcmds", default=1, type=int, help="nubmer of steamcmd containers to run")
+    parser.add_argument("-l", "--listen", action="append", type=str, help="listen address")
+    parser.add_argument("-i", "--image", default="steamcmd/steamcmd:alpine", type=str, help="container image")
+    parser.add_argument("-r", "--retries", default=3, type=int, help="max download retry attempts")
+    parser.add_argument("-w", "--workdir", default="/tmp/materialist-steamcmd", type=Path, help="temporary file download directory")
+    # fmt: on
     args = parser.parse_args()
 
     log.debug(args)
