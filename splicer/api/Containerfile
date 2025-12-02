@@ -1,0 +1,54 @@
+# This is expected to be _built_ with the project root as the context directory.
+#
+# podman build -f path/to/this/Containerfile .
+
+FROM docker.io/fedora:latest AS build
+
+ARG BUILD_ARGS=""
+
+WORKDIR /build/api
+
+RUN mkdir /.cargo && cat << EOF > /.cargo/config.toml
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+EOF
+
+RUN microdnf install -y cargo openssl-devel systemd-devel sqlite-devel mold
+
+RUN rustc --version
+
+ADD splicer/api/Cargo.toml \
+    splicer/api/Cargo.lock \
+    /build/api
+
+# Remove vendored kanal, and local dependencies autodaemon & stupid-rate-limit,
+# neither need to be fetched and cargo fetch will complain if they are missing.
+RUN sed -i 's/.*container build no fetch*//' Cargo.toml
+
+# --target to avoid fetching windows dependencies
+#
+# This doesn't use --locked because we mangle the .toml above with sed and
+# cargo will complain that it wants to modify the lock file.
+# Hopefully, whatever changes it wants to make to the lock file are subtractive
+# only and everything is all cool when we restore the original.
+RUN cargo fetch --target x86_64-unknown-linux-gnu
+
+ADD splicer/api/Cargo.toml \
+    /build/api
+
+ADD splicer/autodaemon        /build/autodaemon
+ADD splicer/stupid-rate-limit /build/stupid-rate-limit
+ADD splicer/api               /build/api
+
+RUN cargo build --locked --offline --release ${BUILD_ARGS}
+
+RUN mkdir /out && cp /build/api/target/release/europan-materialist /out/europan-materialist
+
+
+FROM docker.io/fedora:latest
+
+WORKDIR /api/config
+
+COPY --from=build /out/europan-materialist /api/runtime/europan-materialist
+
+ENTRYPOINT ["/api/runtime/europan-materialist"]

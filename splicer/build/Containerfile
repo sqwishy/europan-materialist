@@ -1,0 +1,17 @@
+# This is expected to be _built_ with the project root as the context directory.
+#
+# podman build -f path/to/this/Containerfile .
+
+# FROM alpine:latest
+# 
+# RUN apk update \
+#  && apk add python3 py3-lxml py3-pillow
+
+FROM registry.fedoraproject.org/fedora-minimal
+
+RUN microdnf install -y python3 python3-lxml python3-pillow \
+ && microdnf clean all
+
+ADD baro-data.py .
+
+ENTRYPOINT ["python3", "baro-data.py"]

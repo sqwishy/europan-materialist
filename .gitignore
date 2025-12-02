@@ -4,3 +4,4 @@ __pycache__
 scrap
 Cargo.lock
 package-lock.json
+.ninja_log

@@ -27,6 +27,7 @@ pub const BARO_APPID: &'static str = "602960";
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
     pub www: std::net::SocketAddr,
+    pub db: String,
     pub steamcmd_url: Url,
     pub steamcmd_concurrency: u8,
     pub steamcommunity_url: Url,
@@ -54,37 +55,35 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             www: "127.0.0.1:8847".parse().unwrap(),
+            db: "/tmp/materialist-rs.sqlite".to_string(),
             steamcmd_url: "http://localhost:8888/".parse().unwrap(),
-            steamcmd_concurrency: 12,
+            steamcmd_concurrency: 3,
             steamcommunity_url: "https://steamcommunity.com/".parse().unwrap(),
-            steamcommunity_concurrency: 8,
+            steamcommunity_concurrency: 4,
             steamcommunity_read_timeout: Duration::from_secs(30).into(),
             podman_unix: "/run/user/1000/podman/podman.sock".parse().unwrap(),
             podman_concurrency: 8,
             user_agent: "europan-materialist/0 (materialist.pages.dev)".to_string(),
-            publish_image: "baro-publish".to_string(),
-            build_image: "baro-data".to_string(),
+            publish_image: "splicer-publish".to_string(),
+            build_image: "splicer-build".to_string(),
             secrets_volume: "materialist-secrets".to_string(),
             deploy_site: "materialist-next".to_string(),
             // deploy_url: "https://materialist-next.pages.dev/".to_string(),
             wait_on_publish_poll_interval: Duration::from_millis(500),
-            response_headers: Default::default(),
-            // response_headers: no_args::headers::ExtraHeaders(vec![
-            //     (
-            //         axum::http::header::HeaderName::from_static(
-            //             "access-control-allow-origin",
-            //         ),
-            //         axum::http::header::HeaderValue::from_static(
-            //             "https://materialist-splicer.pages.dev",
-            //         ),
-            //     ),
-            //     (
-            //         axum::http::header::HeaderName::from_static(
-            //             "access-control-allow-methods",
-            //         ),
-            //         axum::http::header::HeaderValue::from_static("POST, GET, OPTIONS"),
-            //     ),
-            // ]),
+            response_headers: no_args::headers::ExtraHeaders(vec![
+                (
+                    axum::http::header::HeaderName::from_static(
+                        "access-control-allow-origin",
+                    ),
+                    axum::http::header::HeaderValue::from_static("*"),
+                ),
+                (
+                    axum::http::header::HeaderName::from_static(
+                        "access-control-allow-methods",
+                    ),
+                    axum::http::header::HeaderValue::from_static("POST, GET, OPTIONS"),
+                ),
+            ]),
         }
     }
 }
@@ -135,8 +134,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         .await
         .context("bind to listen address")?;
 
-    let db_connection =
-        db::connect("/tmp/materialist-rs.sqlite").context("open database")?;
+    let db_connection = db::connect(&cfg.db).context("open database")?;
 
     let (db_s, db_r) = kanal::bounded_async(3);
 
@@ -340,8 +338,6 @@ pub(crate) mod publish {
         }
 
         async fn publish(&self) -> anyhow::Result<(i64, Vec<i64>)> {
-            use futures_lite::stream::{self, StreamExt};
-
             let new_publish = self
                 .db
                 .new_publish()
