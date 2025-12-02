@@ -1,3 +1,5 @@
+# This is expected to be _built_ with the project root as the context directory.
+
 FROM node:current-alpine
 
 WORKDIR /publish/web
@@ -5,8 +7,8 @@ WORKDIR /publish/web
 RUN apk update \
  && apk add --no-cache python3 py3-lxml # py3-pillow
 
-ADD ../../baro-data/baro-data.py \
-    baro-publish.sh \
+ADD baro-data/baro-data.py \
+    splicer/publish/splicer-publish.sh \
     .
 
 ADD web/package.json \
@@ -30,6 +32,6 @@ RUN npm install -g wrangler
 
 RUN rm -rf /root/.npm
 
-ENTRYPOINT ["/publish/web/baro-publish.sh"]
+ENTRYPOINT ["/publish/web/splicer-publish.sh"]
 
 # vim: syntax=dockerfile
