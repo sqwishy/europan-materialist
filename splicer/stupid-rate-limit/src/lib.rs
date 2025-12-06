@@ -161,7 +161,7 @@ impl Entry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Options {
     /// maximum ticket count for each entry
     pub capacity: Ticket,

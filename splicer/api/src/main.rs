@@ -28,6 +28,7 @@ pub const BARO_APPID: &'static str = "602960";
 pub struct Config {
     pub www: std::net::SocketAddr,
     pub db: String,
+    pub debug_auth: String,
     pub steamcmd_url: Url,
     pub steamcmd_concurrency: u8,
     pub steamcommunity_url: Url,
@@ -39,6 +40,7 @@ pub struct Config {
     pub user_agent: String,
     pub publish_image: String,
     pub build_image: String,
+    pub vanilla_image: String,
     /* A volume containing a file named `cloudflare` that looks like;
      * CLOUDFLARE_ACCOUNT_ID=...
      * CLOUDFLARE_API_TOKEN=... */
@@ -56,6 +58,7 @@ impl Default for Config {
         Self {
             www: "127.0.0.1:8847".parse().unwrap(),
             db: "/tmp/materialist-rs.sqlite".to_string(),
+            debug_auth: "".to_string(),
             steamcmd_url: "http://localhost:8888/".parse().unwrap(),
             steamcmd_concurrency: 3,
             steamcommunity_url: "https://steamcommunity.com/".parse().unwrap(),
@@ -66,6 +69,7 @@ impl Default for Config {
             user_agent: "europan-materialist/0 (materialist.pages.dev)".to_string(),
             publish_image: "splicer-publish".to_string(),
             build_image: "splicer-build".to_string(),
+            vanilla_image: "barotrauma".to_string(),
             secrets_volume: "materialist-secrets".to_string(),
             deploy_site: "materialist-next".to_string(),
             // deploy_url: "https://materialist-next.pages.dev/".to_string(),
@@ -778,6 +782,12 @@ pub mod www {
             let tasks = BackgroundTasks::new();
 
             /* ROUTES */
+            let debug_router = Router::new()
+                .route("/workshop-item/{pk}/file/", get(get_workshop_item_file))
+                .route("/build/{pk}/fragment/", get(get_build_fragment))
+                .route("/republish/", post(republish))
+                .route("/rate-limits/", get(dump_rate_limits))
+                .layer(axum::middleware::from_fn(require_debug_auth));
 
             let app = Router::new()
                 .route("/ping/", get(ping))
@@ -795,10 +805,7 @@ pub mod www {
                 .route("/publish/{pk}/wait/", get(wait_on_publish))
                 // .route("/build/{pk}/publish/", get(build_fragments))
                 /* todo guard behind auth */
-                .route("/x/workshop-item/{pk}/file/", get(get_workshop_item_file))
-                .route("/x/build/{pk}/fragment/", get(get_build_fragment))
-                .route("/x/republish/", post(republish))
-                .route("/x/rate-limits/", get(dump_rate_limits))
+                .nest("/x", debug_router)
                 .layer(Extension(self.podman))
                 .layer(Extension(self.steamcmd))
                 .layer(Extension(self.steamweb))
@@ -885,6 +892,32 @@ pub mod www {
         response
     }
 
+    async fn require_debug_auth(
+        Extension(cfg): Extension<Arc<Config>>,
+        request: axum::extract::Request,
+        next: axum::middleware::Next,
+    ) -> Response {
+        const AUTHORIZATION: HeaderName = HeaderName::from_static("authorization");
+
+        if cfg.debug_auth.is_empty() {
+            return not_found_response();
+        }
+
+        let Some(auth) = request
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+        };
+
+        if auth != cfg.debug_auth {
+            return (StatusCode::FORBIDDEN, "forbidden").into_response();
+        }
+
+        next.run(request).await
+    }
+
     #[derive(Debug, Clone)]
     struct BackgroundTasks(Arc<Mutex<JoinSet<()>>>, Arc<Notify>);
 
@@ -958,7 +991,6 @@ pub mod www {
         }
     }
 
-    // struct RateLimited<const N: stupid_rate_limit::Ticket>;
     #[derive(Debug, Clone)]
     struct RateLimited(RateLimit, Option<IpAddr>);
 
@@ -983,6 +1015,11 @@ pub mod www {
         async fn entries(&self) -> Vec<(IpAddr, stupid_rate_limit::Ticket)> {
             let RateLimited(mutex, ip) = self;
             mutex.lock().await.entries()
+        }
+
+        async fn options(&self) -> stupid_rate_limit::Options {
+            let RateLimited(mutex, ip) = self;
+            mutex.lock().await.options().clone()
         }
     }
 
@@ -1045,11 +1082,12 @@ pub mod www {
 
     /* request handlers? */
 
-    async fn ping(rate: RateLimited) -> Response {
-        match rate.read().await {
-            Some(v) => v.to_string().into_response(),
-            None => "pong".into_response(),
-        }
+    async fn ping(rate: RateLimited) -> Result<Response, Response> {
+        let stupid_rate_limit::Options { capacity, .. } = rate.options().await;
+        json_response(json!({
+            "capacity": capacity,
+            "value": rate.read().await.unwrap_or(0),
+        }))
     }
 
     async fn get_build(
@@ -1135,11 +1173,11 @@ pub mod www {
 
             let create = json!({
                 "name": format!("materialist-build-{}", pk),
-                "image": "baro-data",
+                "image": cfg.build_image,
                 "terminal": true,
                 "command": command,
                 "volumes": [
-                    {"name": "barotrauma", "dest": "/baro/vanilla"},
+                    {"name": cfg.vanilla_image, "dest": "/baro/vanilla"},
                 ],
             });
 
@@ -1217,6 +1255,7 @@ pub mod www {
                 let stuff = zstd::decode_all(&data[..])
                     .with_context(|| oof![s ~ "zstd decode", pk ~ pk])
                     .map_err(internal_error)?;
+                let reqlen = stuff.len();
 
                 podman
                     .put(format!(
@@ -1225,12 +1264,12 @@ pub mod www {
                     ))
                     .header(CONTENT_TYPE, APPLICATION_XTAR)
                     .body(stuff)
-                    .send()
-                    .await
                     .expect_status(StatusCode::OK)
+                    .await
                     .with_context(|| {
                         oof![s ~ "libpod/containers/archive",
                              pk ~ pk,
+                             reqlen ~ reqlen,
                              container ~ container_id.clone()]
                     })
                     .map_err(internal_error)?;
@@ -1240,9 +1279,8 @@ pub mod www {
                 .post(format!(
                     "http://p/v6.0.0/libpod/containers/{container_id}/start"
                 ))
-                .send()
-                .await
                 .expect_status(StatusCode::NO_CONTENT)
+                .await
                 .with_context(|| {
                     oof![s ~ "libpod/containers/start",
                          container ~ container_id.clone()]
@@ -1387,7 +1425,11 @@ pub mod www {
     }
 
     async fn dump_rate_limits(rate: RateLimited) -> Result<Response, Response> {
-        json_response(rate.entries().await)
+        let stupid_rate_limit::Options { capacity, .. } = rate.options().await;
+        json_response(json!({
+            "capacity": capacity,
+            "entries": rate.entries().await,
+        }))
     }
 
     #[derive(serde::Deserialize)]
@@ -2209,6 +2251,7 @@ pub(crate) mod podman {
         impl StatusCodeExt for reqwest::Result<reqwest::Response> {
             type Out = anyhow::Result<reqwest::Response>;
 
+            /* TODO somehow warn about unused reqwest::Response */
             fn expect_status(
                 self,
                 expected: StatusCode,

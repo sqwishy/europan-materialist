@@ -6,9 +6,13 @@ for development, if you want to use --reload, run under hypercorn:
 for release, run this module/script directly:
     `python -m materialist.steamcmd`
 
-depends on:
+depends on packages:
   hypercorn[trio]
   starlette
+
+also depends on on these programs:
+  tar
+  zstd
 
 use in podman:
   podman build -f Containerfile --tag materialist-steamcmd
@@ -117,21 +121,23 @@ def test_buffer_read_failure():
 
 
 async def run_one_steamcmd(
-    req_r, workdir, image, retries, *, task_status=trio.TASK_STATUS_IGNORED
+    req_r, work, work_outer, image, retries, *, task_status=trio.TASK_STATUS_IGNORED
 ):
     args = [
         "podman-remote",
         "run",
         "--rm",
         "-i",
+        "--pull=never",
         # This is shared with the most so we can remove the downloaded files at
         # runtime. But it does not need to be backed by a disk.
         "-v",
-        f"{workdir}:/root/Steam/steamapps/workshop/content",
+        f"{work_outer}:/root/Steam/steamapps/workshop/content",
         image,
         # "+force_install_dir", "/tmp/bind",
         "+login anonymous",
     ]
+    log.butt(args)
 
     async with trio.open_nursery() as nursery:
         steamcmd = await nursery.start(
@@ -148,7 +154,7 @@ async def run_one_steamcmd(
             else:
                 log.info("steamcmd ready")
 
-            await run_steamcmd_forever(req_r, steamcmd, buf, workdir, retries)
+            await run_steamcmd_forever(req_r, steamcmd, buf, work, retries)
         finally:
             with trio.move_on_after(250 * MILLIS, shield=True):
                 try:
@@ -169,7 +175,7 @@ async def run_steamcmd_forever(
     req_r,
     steamcmd,
     buf,
-    workdir,
+    work,
     retries,
 ):
     while True:
@@ -179,7 +185,7 @@ async def run_steamcmd_forever(
             # if this is closed, the service is shutting down
             break
 
-        itempath = workdir / msg.appid / msg.itemid
+        itempath = work / msg.appid / msg.itemid
 
         try:
             reply = None
@@ -365,7 +371,7 @@ async def lifespan(app):
     image = app.state.args.image
     retries = max(app.state.args.retries, 1)
 
-    app.state.args.workdir.mkdir(mode=0o770, exist_ok=True)
+    app.state.args.work.mkdir(mode=0o770, exist_ok=True)
 
     async with trio.open_nursery() as nursery:
 
@@ -377,11 +383,17 @@ async def lifespan(app):
             log.butt("starting steamcmd in background")
             steamcmds = []
             for i in range(app.state.args.steamcmds):
-                workdir = app.state.args.workdir / f"{i}"
-                workdir.mkdir(mode=0o770, exist_ok=True)
+                work = app.state.args.work / f"{i}"
+                work.mkdir(mode=0o770, exist_ok=True)
+
+                if app.state.args.work_outer:
+                    work_outer = app.state.args.work_outer / f"{i}"
+                else:
+                    work_outer = work
+
                 steamcmds.append(
                     await nursery.start(
-                        run_one_steamcmd, req_r, workdir, image, retries
+                        run_one_steamcmd, req_r, work, work_outer, image, retries
                     )
                 )
             log.butt("lifespan up")
@@ -430,7 +442,8 @@ def main():
     parser.add_argument("-l", "--listen", action="append", type=str, help="listen address")
     parser.add_argument("-i", "--image", default="steamcmd/steamcmd:alpine", type=str, help="container image")
     parser.add_argument("-r", "--retries", default=3, type=int, help="max download retry attempts")
-    parser.add_argument("-w", "--workdir", default="/tmp/materialist-steamcmd", type=Path, help="temporary file download directory")
+    parser.add_argument("-w", "--work", default="/tmp/steamcmd-work", type=Path, help="temporary file download directory. either this or --work-outer can be a volume name yet")
+    parser.add_argument("--work-outer", default=None, type=Path, help="path to --work passed to steamcmd with podman-remote. defaults to --work. If this is program is run in a container with --work bind mounted in, --work-outer should be the path on the host. This way, this program can read what steamcmd writes.")
     # fmt: on
     args = parser.parse_args()
 
