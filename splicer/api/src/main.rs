@@ -13,7 +13,7 @@ use reqwest::Url;
 
 use tokio::{
     sync::{Mutex, Notify},
-    task,
+    task::{self, JoinSet},
 };
 
 use kanal::{AsyncReceiver as Receiver, AsyncSender as Sender};
@@ -98,6 +98,21 @@ impl Default for Config {
                 ),
             ]),
         }
+    }
+}
+
+impl Config {
+    pub fn inner_work_dir_for_build(&self, pk: i64) -> String {
+        format!("{}/{}-build", self.work_inner, pk)
+    }
+    pub fn outer_work_dir_for_build(&self, pk: i64) -> String {
+        format!("{}/{}-build", self.work_outer, pk)
+    }
+    pub fn inner_work_dir_for_publish(&self, pk: i64) -> String {
+        format!("{}/{}-publish", self.work_inner, pk)
+    }
+    pub fn outer_work_dir_for_publish(&self, pk: i64) -> String {
+        format!("{}/{}-publish", self.work_outer, pk)
     }
 }
 
@@ -194,6 +209,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         db: db::Client { s: db_s },
         cfg: Arc::clone(&cfg),
         podman: podman.clone(),
+        tasks: tasks.clone(),
         steamcmd,
         steamweb,
         publish: pub_s,
@@ -204,29 +220,24 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         pub_r,
         db: www.db.clone(),
         cfg: Arc::clone(&cfg),
+        tasks: tasks.clone(),
         podman,
     };
 
     info!("listening"; "addr" => www.listener.local_addr().as_ref().unwrap_or(&cfg.www));
 
-    let (db_thread_s, db_thread_r) = kanal::bounded_async::<()>(0);
+    let (db_thread_s, db_thread_r) = kanal::bounded_async::<_>(0);
     let db_thread = std::thread::Builder::new()
         .name("materialist-db".to_string())
         .spawn(move || {
-            let _ = db_thread_s /* drop signals that this thread has quit */;
             let mut db_daemon = db::Daemon { db: db_connection, r: db_r.to_sync() };
-            db_daemon.run_forever()
+            let _: Result<_, _> = db_thread_s.to_sync().send(db_daemon.run_forever());
         })
         .context("start database thread")?;
 
     let mut www_task = Some(task::spawn(www.run_forever()));
     let mut pub_task = Some(task::spawn(publish.run_forever()));
-    let mut db_task = Some(task::spawn(async move {
-        tokio::select! {
-            _ = sys_r.recv() => (),
-            _ = db_thread_r.recv() => (),
-        }
-    }));
+    let mut db_task = Some(task::spawn(async move { db_thread_r.recv().await }));
 
     let mut sys_s = Some(sys_s);
 
@@ -234,8 +245,14 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         tokio::select! {
             biased;
 
+            _ = tasks.needs_tending() => {
+                tasks.tend().await;
+                continue;
+            }
+
             res = once_task(&mut db_task), if db_task.is_some() => match res {
-                Ok(()) => butt!("db exit"),
+                Ok(Ok(Ok(()))) => butt!("db exit"; ),
+                Ok(res) => butt!("db exit"; "res" => logging::dbg(res)),
                 Err(joinerr) => crit!("db panic?"; "err" => logging::err(joinerr)),
             },
 
@@ -259,6 +276,8 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         };
     }
 
+    tasks.tend().await;
+
     if let Err(err) = db_thread.join() {
         crit!("database thread panicked; I guess I will too!");
         std::panic::resume_unwind(err);
@@ -278,6 +297,90 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
             None => std::future::pending().await,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BackgroundTasks(Arc<Mutex<JoinSet<()>>>, Arc<Notify>);
+
+impl BackgroundTasks {
+    fn new() -> Self {
+        Self(
+            Arc::new(Mutex::new(JoinSet::new())),
+            Arc::new(Notify::new()),
+        )
+    }
+
+    fn notif(&self) -> Arc<Notify> {
+        self.1.clone()
+    }
+
+    fn needs_tending(&self) -> impl Future<Output = ()> {
+        self.1.notified()
+    }
+
+    async fn tend(&self) {
+        while let Some(res) = self.0.lock().await.try_join_next() {
+            let res: Result<(), _> = res;
+            if let Err(joinerr) = res {
+                crit!("background joinset"; "err" => logging::err(joinerr))
+            }
+        }
+    }
+
+    async fn tend_until(self, sys_r: Receiver<SystemMsg>) {
+        loop {
+            tokio::select! {
+                biased;
+                _ = self.needs_tending() => self.tend().await,
+                _ = sys_r.recv() => break,
+            }
+        }
+    }
+
+    /* this is used to continue handling a request without being cancelled
+     * when the requester diconnects */
+    pub(crate) async fn spawn<T, F>(&self, f: F) -> Receiver<T>
+    where
+        F: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let (s, r) = kanal::bounded_async(1);
+        let notif = self.notif();
+        self.0.lock().await.spawn(async move {
+            let _ = s.send(f.await).await;
+            notif.notify_one()
+        });
+        r
+    }
+
+    pub(crate) async fn run_on_drop<F>(&self, f: F) -> Sender<()>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let (drop_to_remove, remove) = kanal::bounded_async::<()>(0);
+        let notif = self.notif();
+        self.0.lock().await.spawn(async move {
+            let _ = remove.recv().await;
+            f.await;
+            notif.notify_one()
+        });
+        drop_to_remove
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum RmdirError {
+    #[error("join")]
+    Join(#[source] tokio::task::JoinError),
+    #[error("io")]
+    Io(#[source] std::io::Error),
+}
+
+pub(crate) async fn rmdir_rf(path: Arc<String>) -> Result<(), RmdirError> {
+    tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&*path))
+        .await
+        .map_err(RmdirError::Join)?
+        .map_err(RmdirError::Io)
 }
 
 pub(crate) mod publish {
@@ -316,6 +419,7 @@ pub(crate) mod publish {
         pub cfg: Arc<super::Config>,
         pub db: db::Client,
         pub podman: podman::Client,
+        pub tasks: crate::BackgroundTasks,
     }
 
     impl Server {
@@ -380,12 +484,25 @@ pub(crate) mod publish {
                 warn!("no build found, publishing anyway");
             }
 
-            let work = Arc::new(format!("{}/{}-publish", self.cfg.work_inner, pk));
+            let work = Arc::new(self.cfg.inner_work_dir_for_publish(pk));
 
             fs::create_dir(&*work) /**/
                 .with_context(|| oof![mkdir ~ work.clone(), publish ~ pk])?;
 
-            /* FIXME rmdir on drop */
+            let _rm_work_on_drop = self
+                .tasks
+                .run_on_drop({
+                    let work = work.clone();
+                    async move {
+                        if let Err(err) = crate::rmdir_rf(work.clone()).await {
+                            warn!("failed rmdir";
+                                  "publish" => pk,
+                                  "path" => work,
+                                  "err" => logging::err(err));
+                        }
+                    }
+                })
+                .await;
 
             let then = crate::now();
 
@@ -407,7 +524,7 @@ pub(crate) mod publish {
                 .podman
                 .acquire()
                 .await
-                .with_context(|| oof![s ~ "acquire podman"])?;
+                .with_context(|| oof![s ~ "acquire podman", publish ~ pk])?;
 
             let create = json!({
                 "name": format!("materialist-publish-{}", pk),
@@ -418,8 +535,9 @@ pub(crate) mod publish {
                     "PROJECT_NAME": &self.cfg.deploy_site,
                 },
                 "mounts": [{
-                    "Type": "tmpfs",
-                    "Destination": "/publish/web/assets/bundles",
+                    "Type": "bind",
+                    "Source": self.cfg.outer_work_dir_for_publish(pk),
+                    "Destination": "/publish/web/assets/bundles/",
                 }],
                 "terminal": true,
                 "volumes": [{
@@ -437,13 +555,15 @@ pub(crate) mod publish {
                 .parse_json::<podman::CreateResponse>()
                 .with_context(|| {
                     oof![s ~ "libpod/containers/create",
-                         req ~ create.clone()]
+                         req ~ create.clone(),
+                         publish ~ pk]
                 })
                 .map(|podman::CreateResponse { Id, Warnings }| {
                     if !Warnings.is_empty() {
                         warn!("libpod/containers/create";
                               "warnings" => logging::dbg(Warnings),
-                              "create" => &create);
+                              "create" => &create,
+                              "publish" => pk);
                     }
                     Id
                 })?;
@@ -454,7 +574,9 @@ pub(crate) mod publish {
             let res = self
                 ._publish_from_container(pk, &podman, &container_id)
                 .await
-                .with_context(|| oof![pk ~ pk, container ~ container_id.to_string()]);
+                .with_context(
+                    || oof![publish ~ pk, container ~ container_id.to_string()],
+                );
 
             let delete = podman
                 .delete(format!(
@@ -467,15 +589,17 @@ pub(crate) mod publish {
 
             if let Err(err) = delete {
                 warn!("failed libpod/containers/delete";
+                      "err" => logging::err(err),
                       "container" => &container_id,
-                      "err" => logging::err(err));
+                      "publish" => pk);
             }
 
             /* TODO
              * this will return if res is an Err(_)
              * but shouldn't this save a PublishResult with exit code -1 or something? */
             let (output, exit_code) = res?;
-            let public_url = format!("https://{}.pages.dev/", self.cfg.deploy_site);
+            let public_url =
+                format!("https://{}.pages.dev/{}/", self.cfg.deploy_site, pk);
             let result = db::PublishResult { pk, exit_code, output, public_url };
             self.db
                 .save_publish_result(result)
@@ -716,7 +840,7 @@ pub(crate) mod types {
     }
 }
 
-pub mod www {
+pub(crate) mod www {
     use std::borrow::Cow;
     use std::collections::BTreeMap;
     use std::net::IpAddr;
@@ -741,8 +865,7 @@ pub mod www {
 
     use kanal::{AsyncReceiver as Receiver, AsyncSender as Sender};
 
-    use tokio::sync::{Mutex, Notify};
-    use tokio::task::JoinSet;
+    use tokio::sync::Mutex;
 
     use stupid_rate_limit::Rated;
 
@@ -761,7 +884,7 @@ pub mod www {
     use crate::{
         aux, butt, crit,
         errslop::{traits::*, Oof},
-        impl_from_err, logging, oof, warn, Config,
+        logging, oof, warn, BackgroundTasks, Config,
     };
 
     pub const APPLICATION_XTAR: HeaderValue =
@@ -776,6 +899,7 @@ pub mod www {
         pub sys_r: Receiver<super::SystemMsg>,
         pub db: db::Client,
         pub cfg: Arc<Config>,
+        pub tasks: BackgroundTasks,
         pub podman: podman::Client,
         pub steamcmd: steamcmd::Client,
         pub steamweb: steamweb::Client,
@@ -798,8 +922,6 @@ pub mod www {
         pub async fn run_forever(self) -> std::io::Result<()> {
             use axum::routing::{get, post, Router};
             use axum::ServiceExt;
-
-            let tasks = BackgroundTasks::new();
 
             /* ROUTES */
             let debug_router = Router::new()
@@ -830,59 +952,17 @@ pub mod www {
                 .layer(Extension(self.steamcmd))
                 .layer(Extension(self.steamweb))
                 .layer(Extension(self.publish))
-                .layer(Extension(self.db.clone()))
-                .layer(Extension(tasks.clone()))
+                .layer(Extension(self.db))
+                .layer(Extension(self.tasks))
                 // .layer(Extension(FragmentBuildTasks::new()))
                 .layer(Extension(RateLimit::new()))
                 .layer(axum::middleware::from_fn(config_headers))
                 .layer(Extension(Arc::clone(&self.cfg)))
                 .layer(axum::middleware::from_fn(log_stuff));
 
-            let mut serve = tokio::task::spawn(async move {
-                axum::serve(self.listener, app)
-                    .with_graceful_shutdown(
-                        async move { drop(self.sys_r.recv().await) },
-                    )
-                    .await
-            });
-
-            let BackgroundTasks(tasks, tasks_cleanup) = tasks;
-            loop {
-                tokio::select! {
-                    biased;
-
-                    res = &mut serve => {
-                        match res {
-                            Ok(Ok(())) => (),
-                            Ok(Err(err)) => crit!("serve failed"; "err" => logging::err(err)),
-                            Err(joinerr) => crit!("serve panic?"; "err" => logging::err(joinerr)),
-                        };
-                        break;
-                    }
-
-                    _ = tasks_cleanup.notified() => {
-                        while let Some(res) = tasks.lock().await.try_join_next() {
-                            match res {
-                                Ok(()) => (),
-                                Err(joinerr) => crit!("www joinset"; "err" => logging::err(joinerr)),
-                            }
-                        }
-                    }
-                }
-            }
-
-            let mut joinset = tasks.lock().await;
-
-            while let Some(res) = joinset.join_next().await {
-                match res {
-                    Ok(()) => (),
-                    Err(joinerr) => {
-                        crit!("www joinset"; "err" => logging::err(joinerr))
-                    }
-                }
-            }
-
-            Ok(())
+            axum::serve(self.listener, app)
+                .with_graceful_shutdown(async move { drop(self.sys_r.recv().await) })
+                .await
         }
     }
 
@@ -937,69 +1017,6 @@ pub mod www {
 
         next.run(request).await
     }
-
-    #[derive(Debug, Clone)]
-    struct BackgroundTasks(Arc<Mutex<JoinSet<()>>>, Arc<Notify>);
-
-    impl BackgroundTasks {
-        fn new() -> Self {
-            Self(
-                Arc::new(Mutex::new(JoinSet::new())),
-                Arc::new(Notify::new()),
-            )
-        }
-
-        fn notif(&self) -> Arc<Notify> {
-            self.1.clone()
-        }
-
-        /* this is used to continue handling a request without being cancelled
-         * when the requester diconnects */
-        async fn spawn<T, F>(&self, f: F) -> Receiver<T>
-        where
-            F: Future<Output = T> + Send + 'static,
-            T: Send + 'static,
-        {
-            let (s, r) = kanal::bounded_async(1);
-            let notif = self.notif();
-            self.0.lock().await.spawn(async move {
-                let _ = s.send(f.await).await;
-                notif.notify_one()
-            });
-            r
-        }
-
-        async fn run_on_drop<F>(&self, f: F) -> Sender<()>
-        where
-            F: Future<Output = ()> + Send + 'static,
-        {
-            let (drop_to_remove, remove) = kanal::bounded_async::<()>(0);
-            let notif = self.notif();
-            self.0.lock().await.spawn(async move {
-                let _ = remove.recv().await;
-                f.await;
-                notif.notify_one()
-            });
-            drop_to_remove
-        }
-    }
-
-    // #[derive(Debug, Clone)]
-    // struct FragmentBuildTasks(Arc<Mutex<BTreeMap<i64, Receiver<()>>>>);
-
-    // impl std::ops::Deref for FragmentBuildTasks {
-    //     type Target = Mutex<BTreeMap<i64, Receiver<()>>>;
-
-    //     fn deref(&self) -> &Self::Target {
-    //         &self.0
-    //     }
-    // }
-
-    // impl FragmentBuildTasks {
-    //     fn new() -> Self {
-    //         Self(Arc::new(Mutex::new(BTreeMap::new())))
-    //     }
-    // }
 
     #[derive(Debug, Clone)]
     struct RateLimit(Arc<Mutex<Rated<IpAddr>>>);
@@ -1088,6 +1105,7 @@ pub mod www {
 
     fn remote_ip(hs: &HeaderMap) -> Option<IpAddr> {
         for header in [
+            /* FIXME use const */
             HeaderName::from_static("cf-connecting-ip"),
             HeaderName::from_static("x-forwarded-for"),
         ]
@@ -1185,7 +1203,7 @@ pub mod www {
                 .await?
                 .map_err(internal_error)?;
 
-            let work = Arc::new(format!("{}/{}-build", cfg.work_inner, pk));
+            let work = Arc::new(cfg.inner_work_dir_for_build(pk));
 
             fs::create_dir(&*work) /**/
                 .with_context(|| oof![mkdir ~ work.clone(), build ~ pk])
@@ -1194,15 +1212,11 @@ pub mod www {
             let _rmdir_work_on_drop = bg_for_cleanup_work
                 .run_on_drop({
                     let work = work.clone();
-                    let work_ = work.clone();
                     async move {
-                        if let Err(err) =
-                            task::spawn_blocking(move || fs::remove_dir_all(&*work))
-                                .await
-                        {
+                        if let Err(err) = crate::rmdir_rf(work.clone()).await {
                             warn!("failed rmdir";
                                   "build" => pk,
-                                  "path" => work_,
+                                  "path" => work,
                                   "err" => logging::err(err));
                         }
                     }
@@ -1229,6 +1243,7 @@ pub mod www {
 
             butt!("wrote build files";
                   "n" => files.len(),
+                  "path" => &work,
                   "time" => then.since(),
                   "build" => pk);
 
@@ -1262,7 +1277,7 @@ pub mod www {
                 "command": command,
                 "mounts": [{
                     "Type": "bind",
-                    "Source": format!("{}/{}", cfg.work_outer, pk),
+                    "Source": cfg.outer_work_dir_for_build(pk),
                     "Destination": "/baro/mod",
                 }],
                 "volumes": [
@@ -1415,12 +1430,12 @@ pub mod www {
             .await?
             .map_err(internal_error)?;
 
-            // {
-            //     let (reply, _) = kanal::bounded_async(1);
-            //     if let Err(err) = publish.send(publish::Msg::Publish { reply }).await {
-            //         warn!("failed to submit publish request for build"; "pk" => pk);
-            //     }
-            // }
+            {
+                let (reply, _) = kanal::bounded_async(1);
+                if let Err(err) = publish.send(publish::Msg::Publish { reply }).await {
+                    warn!("failed to submit publish request for build"; "pk" => pk);
+                }
+            }
 
             Ok(see_other(path_for_build(pk)))
         })
@@ -1905,7 +1920,7 @@ pub mod www {
 
     use traits::*;
 
-    pub mod traits {
+    pub(crate) mod traits {
         use axum::response::Response;
         use kanal::AsyncReceiver as Receiver;
 
@@ -2001,7 +2016,7 @@ pub mod www {
     }
 }
 
-pub mod steamcmd {
+pub(crate) mod steamcmd {
     use anyhow::{anyhow, Context};
 
     use crate::{
@@ -2128,7 +2143,7 @@ pub(crate) mod podman {
     use crate::httpreq;
     use crate::logging;
     use crate::misc::{self, traits::*, CompletedProcess};
-    use crate::{aux, impl_from_err, oof};
+    use crate::{aux, oof};
 
     #[derive(Debug, Clone)]
     pub struct Client(httpreq::Client);
@@ -2218,7 +2233,7 @@ pub(crate) mod podman {
 
     use traits::*;
 
-    pub mod traits {
+    pub(crate) mod traits {
         use reqwest::StatusCode;
         use serde_json::Value as JsonValue;
 
@@ -2455,7 +2470,7 @@ pub(crate) mod misc {
 
     use std::future::Future;
 
-    pub mod traits {
+    pub(crate) mod traits {
         use super::{CompletedProcess, Result};
 
         pub trait ProcessExt {
@@ -2632,14 +2647,7 @@ pub(crate) mod db {
 
     #[autodaemon]
     impl Daemon {
-        pub fn save_file(
-            &mut self,
-            item: i64,
-            file: DownloadedFile,
-            // size: i64,
-            // etag: Arc<ETag>,
-            // data: bytes::Bytes,
-        ) -> Result<i64> {
+        pub fn save_file(&mut self, item: i64, file: DownloadedFile) -> Result<i64> {
             let mut tx = self.transaction_immediate()?;
 
             let mut pk = tx.create_timestamp()?;
@@ -4159,7 +4167,7 @@ pub(crate) mod errslop {
         };
     }
 
-    pub mod traits {
+    pub(crate) mod traits {
         use super::{Aux, BigOof};
 
         pub trait ErrOof<T, Y> {
