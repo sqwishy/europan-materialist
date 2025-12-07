@@ -41,7 +41,11 @@ pub struct Config {
     pub user_agent: String,
     pub publish_image: String,
     pub build_image: String,
-    pub build: BuildConfig,
+    /* path in container to temporary files shared with build-image and publish-image */
+    pub work_inner: String,
+    /* path on host to work-inner;
+     * to be specified as bind mounts when creating containers of build-image and publish-image */
+    pub work_outer: String,
     pub vanilla_image: String,
     /* A volume containing a file named `cloudflare` that looks like;
      * CLOUDFLARE_ACCOUNT_ID=...
@@ -53,13 +57,6 @@ pub struct Config {
     #[serde(with = "crate::no_args::duration_ms")]
     pub wait_on_publish_poll_interval: Duration,
     pub response_headers: crate::no_args::headers::ExtraHeaders,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
-pub struct BuildConfig {
-    pub work_inner: String,
-    pub work_outer: String,
 }
 
 impl Default for Config {
@@ -78,7 +75,8 @@ impl Default for Config {
             user_agent: "europan-materialist/0 (materialist.pages.dev)".to_string(),
             publish_image: "splicer-publish".to_string(),
             build_image: "splicer-build".to_string(),
-            build: BuildConfig::default(),
+            work_inner: "/tmp/splicer-api-work".to_string(),
+            work_outer: "/tmp/splicer-api-work".to_string(),
             vanilla_image: "barotrauma".to_string(),
             secrets_volume: "materialist-secrets".to_string(),
             /* project name when deploying with cloudflare wrangler */
@@ -99,15 +97,6 @@ impl Default for Config {
                     axum::http::header::HeaderValue::from_static("POST, GET, OPTIONS"),
                 ),
             ]),
-        }
-    }
-}
-
-impl Default for BuildConfig {
-    fn default() -> Self {
-        Self {
-            work_inner: "/tmp/splicer-api-work".to_string(),
-            work_outer: "/tmp/splicer-api-work".to_string(),
         }
     }
 }
@@ -147,6 +136,18 @@ fn main() {
     }
 }
 
+pub(crate) struct Moment(std::time::Instant);
+
+pub(crate) fn now() -> Moment {
+    Moment(std::time::Instant::now())
+}
+
+impl Moment {
+    pub(crate) fn since(self) -> impl std::fmt::Display {
+        logging::time(std::time::Instant::now().saturating_duration_since(self.0))
+    }
+}
+
 #[derive(Debug)]
 pub struct SystemMsg;
 
@@ -160,6 +161,8 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         .context("bind to listen address")?;
 
     let db_connection = db::connect(&cfg.db).context("open database")?;
+
+    let tasks = BackgroundTasks::new();
 
     let (db_s, db_r) = kanal::bounded_async(3);
 
@@ -334,10 +337,6 @@ pub(crate) mod publish {
         }
 
         async fn start_publish(&self, first: Msg) {
-            // use std::time::Duration;
-            // use tokio::time::sleep;
-            // let mut deadline = sleep(Duration::from_millis(300));
-
             let mut msgs = vec![first];
             let _ = self.pub_r.drain_into(&mut msgs);
 
@@ -363,7 +362,10 @@ pub(crate) mod publish {
         }
 
         async fn publish(&self) -> anyhow::Result<(i64, Vec<i64>)> {
-            let new_publish = self
+            use crate::misc::traits::*;
+            use std::fs;
+
+            let db::NewPublish { pk, fragments } = self
                 .db
                 .new_publish()
                 .await
@@ -374,16 +376,32 @@ pub(crate) mod publish {
                 .with_context(|| oof![s ~ "db recv"])?
                 .with_context(|| oof![s ~ "new_publish"])?;
 
-            let pk = new_publish.pk;
-            let included = new_publish
-                .fragments
-                .iter()
-                .map(|f| f.build)
-                .collect::<Vec<_>>();
+            if fragments.is_empty() {
+                warn!("no build found, publishing anyway");
+            }
 
-            // if new_publish.fragments.is_empty() {
-            //     return anyhow::anyhow!("no builds found, refusing to publish")?;
-            // }
+            let work = Arc::new(format!("{}/{}-publish", self.cfg.work_inner, pk));
+
+            fs::create_dir(&*work) /**/
+                .with_context(|| oof![mkdir ~ work.clone(), publish ~ pk])?;
+
+            /* FIXME rmdir on drop */
+
+            let then = crate::now();
+
+            for db::NewPublishFragment { fragment, build } in &fragments {
+                tokio::process::Command::new("tar")
+                    .args(["-C", &work, "--zstd", "-x"])
+                    .to_completion(&fragment[..])
+                    .await
+                    .and_then(|c| c.into_stdout().map(drop))
+                    .with_context(|| oof![build ~ build.clone(), publish ~ pk])?;
+            }
+
+            butt!("wrote publish fragments";
+                  "n" => fragments.len(),
+                  "time" => then.since(),
+                  "publish" => pk);
 
             let podman = self
                 .podman
@@ -434,7 +452,7 @@ pub(crate) mod publish {
                   "create" => &create, "id" => &container_id);
 
             let res = self
-                ._publish_from_container(new_publish, &podman, &container_id)
+                ._publish_from_container(pk, &podman, &container_id)
                 .await
                 .with_context(|| oof![pk ~ pk, container ~ container_id.to_string()]);
 
@@ -469,35 +487,16 @@ pub(crate) mod publish {
                 .with_context(|| oof![s ~ "db recv"])?
                 .with_context(|| oof![s ~ "new_publish"])?;
 
+            let included = fragments.iter().map(|f| f.build).collect::<Vec<_>>();
             Ok((pk, included))
         }
 
         async fn _publish_from_container(
             &self,
-            db::NewPublish { pk, fragments }: db::NewPublish,
+            pk: i64,
             podman: &podman::BorrowedClient<'_>,
             container_id: &str,
         ) -> anyhow::Result<(String, i64)> {
-            for db::NewPublishFragment { fragment, build } in fragments {
-                let stuff = zstd::decode_all(&fragment[..])
-                    .with_context(|| oof![s ~ "zstd decode", build ~ build])?;
-
-                podman
-                    .put(format!(
-                        "http://p/v6.0.0/libpod/\
-                            containers/{container_id}/archive?\
-                            path=/publish/web/assets/bundles/"
-                    ))
-                    .header(CONTENT_TYPE, APPLICATION_XTAR)
-                    .body(stuff)
-                    .send()
-                    .await
-                    .expect_status(StatusCode::OK)
-                    .with_context(
-                        || oof![s ~ "libpod/containers/archive", build ~ build],
-                    )?;
-            }
-
             let attach = podman
                 .post(format!(
                     "http://p/v6.0.0/libpod/\
@@ -555,7 +554,7 @@ pub(crate) mod publish {
                           "s" => "libpod/containers/wait",
                           "err" => logging::err(err),
                           "text" => &wait_response,
-                          "pk" => pk,
+                          "publish" => pk,
                           "container" => container_id);
                 })
                 .unwrap_or(-1);
@@ -1186,10 +1185,10 @@ pub mod www {
                 .await?
                 .map_err(internal_error)?;
 
-            let work = Arc::new(format!("{}/{}", cfg.build.work_inner, pk));
+            let work = Arc::new(format!("{}/{}-build", cfg.work_inner, pk));
 
             fs::create_dir(&*work) /**/
-                .with_context(|| oof![mkdir ~ work.clone()])
+                .with_context(|| oof![mkdir ~ work.clone(), build ~ pk])
                 .map_err(internal_error)?;
 
             let _rmdir_work_on_drop = bg_for_cleanup_work
@@ -1210,6 +1209,8 @@ pub mod www {
                 })
                 .await;
 
+            let then = crate::now();
+
             for (file_pk, data) in &files {
                 tokio::process::Command::new("tar")
                     .args([
@@ -1222,9 +1223,14 @@ pub mod www {
                     .to_completion(&data[..])
                     .await
                     .and_then(|c| c.into_stdout().map(drop))
-                    .with_context(|| oof![file ~ *file_pk])
+                    .with_context(|| oof![file ~ *file_pk, build ~ pk])
                     .map_err(internal_error)?;
             }
+
+            butt!("wrote build files";
+                  "n" => files.len(),
+                  "time" => then.since(),
+                  "build" => pk);
 
             let podman = podman
                 .acquire()
@@ -1256,7 +1262,7 @@ pub mod www {
                 "command": command,
                 "mounts": [{
                     "Type": "bind",
-                    "Source": format!("{}/{}", cfg.build.work_outer, pk),
+                    "Source": format!("{}/{}", cfg.work_outer, pk),
                     "Destination": "/baro/mod",
                 }],
                 "volumes": [

@@ -28,3 +28,4 @@ dom_query = { version = "0.23.1", default-features = false }
 base64 = { version = "0.22.1", default-features = false }
 zstd = { version = "0.13.3", default-features = false }
 toml = { version = "0.9.8", default-features = false, features = ["display", "parse", "serde", "std"] }
+futures-concurrency = "7.6.3"
