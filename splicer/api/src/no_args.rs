@@ -1,7 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{format_err, Context};
+use anyhow::{Context, format_err};
 
 use crate::ansi;
 
@@ -160,7 +160,7 @@ pub mod duration_ms {
 }
 
 pub mod opt_duration_ms {
-    use serde::{de, de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de, de::Visitor};
     use std::{fmt, time::Duration};
 
     pub fn serialize<S>(o: &Option<Duration>, er: S) -> Result<S::Ok, S::Error>
@@ -261,7 +261,7 @@ pub mod opt_duration_ms {
 }
 
 pub mod headers {
-    use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
     use std::{fmt, time::Duration};
 
     use axum::http::header::{HeaderName, HeaderValue};

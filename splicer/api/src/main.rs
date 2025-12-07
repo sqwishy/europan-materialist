@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 #![allow(unreachable_code)]
 
+// use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,6 +41,7 @@ pub struct Config {
     pub user_agent: String,
     pub publish_image: String,
     pub build_image: String,
+    pub build: BuildConfig,
     pub vanilla_image: String,
     /* A volume containing a file named `cloudflare` that looks like;
      * CLOUDFLARE_ACCOUNT_ID=...
@@ -51,6 +53,13 @@ pub struct Config {
     #[serde(with = "crate::no_args::duration_ms")]
     pub wait_on_publish_poll_interval: Duration,
     pub response_headers: crate::no_args::headers::ExtraHeaders,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct BuildConfig {
+    pub work_inner: String,
+    pub work_outer: String,
 }
 
 impl Default for Config {
@@ -69,8 +78,10 @@ impl Default for Config {
             user_agent: "europan-materialist/0 (materialist.pages.dev)".to_string(),
             publish_image: "splicer-publish".to_string(),
             build_image: "splicer-build".to_string(),
+            build: BuildConfig::default(),
             vanilla_image: "barotrauma".to_string(),
             secrets_volume: "materialist-secrets".to_string(),
+            /* project name when deploying with cloudflare wrangler */
             deploy_site: "materialist-next".to_string(),
             // deploy_url: "https://materialist-next.pages.dev/".to_string(),
             wait_on_publish_poll_interval: Duration::from_millis(500),
@@ -92,6 +103,15 @@ impl Default for Config {
     }
 }
 
+impl Default for BuildConfig {
+    fn default() -> Self {
+        Self {
+            work_inner: "/tmp/splicer-api-work".to_string(),
+            work_outer: "/tmp/splicer-api-work".to_string(),
+        }
+    }
+}
+
 fn main() {
     let config: Config = {
         let mut no_args = no_args::from_argv("materialist", "materialist.toml");
@@ -109,6 +129,7 @@ fn main() {
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
+        .max_blocking_threads(2)
         .build()
     {
         Ok(rt) => rt,
@@ -404,13 +425,13 @@ pub(crate) mod publish {
                     if !Warnings.is_empty() {
                         warn!("libpod/containers/create";
                               "warnings" => logging::dbg(Warnings),
-                              "req" => &create);
+                              "create" => &create);
                     }
                     Id
                 })?;
 
             butt!("libpod/containers/create";
-                  "req" => &create, "id" => &container_id);
+                  "create" => &create, "id" => &container_id);
 
             let res = self
                 ._publish_from_container(new_publish, &podman, &container_id)
@@ -948,6 +969,20 @@ pub mod www {
             });
             r
         }
+
+        async fn run_on_drop<F>(&self, f: F) -> Sender<()>
+        where
+            F: Future<Output = ()> + Send + 'static,
+        {
+            let (drop_to_remove, remove) = kanal::bounded_async::<()>(0);
+            let notif = self.notif();
+            self.0.lock().await.spawn(async move {
+                let _ = remove.recv().await;
+                f.await;
+                notif.notify_one()
+            });
+            drop_to_remove
+        }
     }
 
     // #[derive(Debug, Clone)]
@@ -1107,7 +1142,8 @@ pub mod www {
         // rate: RateLimited,
         Extension(cfg): Extension<Arc<Config>>,
         Extension(bg): Extension<BackgroundTasks>,
-        Extension(bg_for_cleanup): Extension<BackgroundTasks>,
+        Extension(bg_for_cleanup_work): Extension<BackgroundTasks>,
+        Extension(bg_for_cleanup_container): Extension<BackgroundTasks>,
         Extension(db): Extension<db::Client>,
         Extension(podman): Extension<podman::Client>,
         Extension(podman_for_cleanup): Extension<podman::Client>,
@@ -1116,7 +1152,9 @@ pub mod www {
         body: axum::body::Body,
     ) -> Result<Response, Response> {
         use crate::podman::traits::*;
+        use std::fs;
         use std::iter::once;
+        use tokio::task;
 
         let req: db::SaveBuild = parse_json_with_limit(body, FOUR_KILOBYTES).await?;
 
@@ -1148,6 +1186,46 @@ pub mod www {
                 .await?
                 .map_err(internal_error)?;
 
+            let work = Arc::new(format!("{}/{}", cfg.build.work_inner, pk));
+
+            fs::create_dir(&*work) /**/
+                .with_context(|| oof![mkdir ~ work.clone()])
+                .map_err(internal_error)?;
+
+            let _rmdir_work_on_drop = bg_for_cleanup_work
+                .run_on_drop({
+                    let work = work.clone();
+                    let work_ = work.clone();
+                    async move {
+                        if let Err(err) =
+                            task::spawn_blocking(move || fs::remove_dir_all(&*work))
+                                .await
+                        {
+                            warn!("failed rmdir";
+                                  "build" => pk,
+                                  "path" => work_,
+                                  "err" => logging::err(err));
+                        }
+                    }
+                })
+                .await;
+
+            for (file_pk, data) in &files {
+                tokio::process::Command::new("tar")
+                    .args([
+                        "-C",
+                        &work,
+                        &format!("--one-top-level={file_pk}"),
+                        "--zstd",
+                        "-x",
+                    ])
+                    .to_completion(&data[..])
+                    .await
+                    .and_then(|c| c.into_stdout().map(drop))
+                    .with_context(|| oof![file ~ *file_pk])
+                    .map_err(internal_error)?;
+            }
+
             let podman = podman
                 .acquire()
                 .await
@@ -1176,6 +1254,11 @@ pub mod www {
                 "image": cfg.build_image,
                 "terminal": true,
                 "command": command,
+                "mounts": [{
+                    "Type": "bind",
+                    "Source": format!("{}/{}", cfg.build.work_outer, pk),
+                    "Destination": "/baro/mod",
+                }],
                 "volumes": [
                     {"name": cfg.vanilla_image, "dest": "/baro/vanilla"},
                 ],
@@ -1195,21 +1278,21 @@ pub mod www {
                     if !Warnings.is_empty() {
                         warn!("libpod/containers/create";
                               "warnings" => logging::dbg(Warnings),
-                              "req" => &create);
+                              "create" => &create);
                     }
                     Arc::new(Id)
                 })
                 .map_err(internal_error)?;
 
             butt!("libpod/containers/create";
-                  "req" => &create, "id" => &container_id);
+                  "create" => &create, "id" => &container_id);
 
             /* ready up a delete job for the container */
 
             let drop_container_id = Arc::clone(&container_id);
             let (_drop_to_remove, remove) = kanal::bounded_async::<()>(0);
 
-            bg_for_cleanup
+            bg_for_cleanup_container
                 .spawn(async move {
                     let _ = remove.recv().await;
 
@@ -1247,32 +1330,6 @@ pub mod www {
             if let Err(err) = &attach {
                 warn!("failed libpod/containers/attach";
                       "container" => &container_id, "err" => logging::dbg(err));
-            }
-
-            for (pk, data) in files {
-                // let Some(data) = data else { continue };
-
-                let stuff = zstd::decode_all(&data[..])
-                    .with_context(|| oof![s ~ "zstd decode", pk ~ pk])
-                    .map_err(internal_error)?;
-                let reqlen = stuff.len();
-
-                podman
-                    .put(format!(
-                        "http://p/v6.0.0/libpod/\
-                            containers/{container_id}/archive?path=/baro/mod/{pk}"
-                    ))
-                    .header(CONTENT_TYPE, APPLICATION_XTAR)
-                    .body(stuff)
-                    .expect_status(StatusCode::OK)
-                    .await
-                    .with_context(|| {
-                        oof![s ~ "libpod/containers/archive",
-                             pk ~ pk,
-                             reqlen ~ reqlen,
-                             container ~ container_id.clone()]
-                    })
-                    .map_err(internal_error)?;
             }
 
             let start = podman
@@ -1352,13 +1409,12 @@ pub mod www {
             .await?
             .map_err(internal_error)?;
 
-            /* TODO publish request */
-            {
-                let (reply, _) = kanal::bounded_async(1);
-                if let Err(err) = publish.send(publish::Msg::Publish { reply }).await {
-                    warn!("failed to submit publish request for build"; "pk" => pk);
-                }
-            }
+            // {
+            //     let (reply, _) = kanal::bounded_async(1);
+            //     if let Err(err) = publish.send(publish::Msg::Publish { reply }).await {
+            //         warn!("failed to submit publish request for build"; "pk" => pk);
+            //     }
+            // }
 
             Ok(see_other(path_for_build(pk)))
         })
@@ -1401,7 +1457,6 @@ pub mod www {
             tokio::time::sleep(cfg.wait_on_publish_poll_interval).await;
         };
 
-        // return Ok(StatusCode::NO_CONTENT.into_response());
         return json_response(json!({
             "exit_code": exit_code,
             "public_url": url,
@@ -2374,6 +2429,7 @@ pub(crate) mod misc {
             return Ok(stdout);
         }
 
+        /* FIXME rename this to make it clear that it checks exit.() */
         pub fn into_stdout(self) -> Result<String> {
             let Self { exit, stdin: _, stdout, stderr } = self;
 
