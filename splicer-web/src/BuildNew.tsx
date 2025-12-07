@@ -203,8 +203,8 @@ export const BuildNew = () => {
 							<Match when={!getBuild()}>
 								<span>new load order</span>
 							</Match>
-							<Match when={getBuild()?.last()}>
-								{b => <span>{b().pk}</span>}
+							<Match when={params.pk}>
+								<span>{params.pk}</span>
 							</Match>
 							<Match when={true}>
 								<span>...</span>
@@ -380,7 +380,7 @@ export const BuildNew = () => {
 							{p =>
 								<>
 								<span>
-									<a href={p().public_url + params.pk} target="_blank">view</a>
+									<a href={p().public_url} target="_blank">view</a>
 								</span>
 								<span class="smol">
 									<i>code {p().exit_code}; {p().exit_code == 0 ? "ok" : "error"}</i>
