@@ -103,7 +103,7 @@ a, input, button, select
 
 
 pre
-  { overflow-x: scroll }
+  { overflow-x: scroll; max-width: 100% }
 
 p
   { overflow-x: hidden; word-wrap: break-word }
