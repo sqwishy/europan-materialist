@@ -121,22 +121,9 @@ def test_buffer_read_failure():
 
 
 async def run_one_steamcmd(
-    req_r, work, work_outer, image, retries, *, task_status=trio.TASK_STATUS_IGNORED
+    req_r, work, podman_run_args, retries, *, task_status=trio.TASK_STATUS_IGNORED
 ):
-    args = [
-        "podman-remote",
-        "run",
-        "--rm",
-        "-i",
-        "--pull=never",
-        # This is shared with the most so we can remove the downloaded files at
-        # runtime. But it does not need to be backed by a disk.
-        "-v",
-        f"{work_outer}:/root/Steam/steamapps/workshop/content",
-        image,
-        # "+force_install_dir", "/tmp/bind",
-        "+login anonymous",
-    ]
+    args = ["podman-remote", "run", *podman_run_args]
     log.butt(args)
 
     async with trio.open_nursery() as nursery:
@@ -368,7 +355,6 @@ async def zstd_tar(tar_data: bytes) -> bytes:
 
 @asynccontextmanager
 async def lifespan(app):
-    image = app.state.args.image
     retries = max(app.state.args.retries, 1)
 
     app.state.args.work.mkdir(mode=0o770, exist_ok=True)
@@ -391,9 +377,21 @@ async def lifespan(app):
                 else:
                     work_outer = work
 
+                podman_run_args = [
+                    "--rm",
+                    "-i",
+                    "--pull=never",
+                    # This is shared with the most so we can remove the downloaded files at
+                    # runtime. But it does not need to be backed by a disk.
+                    "-v", f"{work_outer}:/root/Steam/steamapps/workshop/content",
+                    *app.state.args.steamcmd_args,
+                    app.state.args.image,
+                    "+login anonymous",
+                ]
+
                 steamcmds.append(
                     await nursery.start(
-                        run_one_steamcmd, req_r, work, work_outer, image, retries
+                        run_one_steamcmd, req_r, work, podman_run_args, retries
                     )
                 )
             log.butt("lifespan up")
@@ -442,8 +440,9 @@ def main():
     parser.add_argument("-l", "--listen", action="append", type=str, help="listen address")
     parser.add_argument("-i", "--image", default="steamcmd/steamcmd:alpine", type=str, help="container image")
     parser.add_argument("-r", "--retries", default=3, type=int, help="max download retry attempts")
-    parser.add_argument("-w", "--work", default="/tmp/steamcmd-work", type=Path, help="temporary file download directory. either this or --work-outer can be a volume name yet")
+    parser.add_argument("-w", "--work", default="/tmp/spl-steamcmd-work", type=Path, help="temporary file download path. cannot be volume name")
     parser.add_argument("--work-outer", default=None, type=Path, help="path to --work passed to steamcmd with podman-remote. defaults to --work. If this is program is run in a container with --work bind mounted in, --work-outer should be the path on the host. This way, this program can read what steamcmd writes.")
+    parser.add_argument("-s", "--steamcmd-args", default=list(), action="append", type=str, help="extra podman args for steamcmd")
     # fmt: on
     args = parser.parse_args()
 

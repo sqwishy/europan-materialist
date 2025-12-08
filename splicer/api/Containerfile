@@ -2,7 +2,7 @@
 #
 # podman build -f path/to/this/Containerfile .
 
-FROM docker.io/fedora:latest AS build
+FROM registry.fedoraproject.org/fedora-minimal:latest AS build
 
 ARG BUILD_ARGS=""
 
@@ -13,7 +13,8 @@ RUN mkdir /.cargo && cat << EOF > /.cargo/config.toml
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 EOF
 
-RUN microdnf install -y cargo openssl-devel systemd-devel sqlite-devel mold
+RUN microdnf install -y --setopt=install_weak_deps=False \
+    cargo openssl-devel systemd-devel sqlite-devel mold
 
 RUN rustc --version
 
@@ -45,7 +46,11 @@ RUN cargo build --locked --offline --release ${BUILD_ARGS}
 RUN mkdir /out && cp /build/api/target/release/europan-materialist /out/europan-materialist
 
 
-FROM docker.io/fedora:latest
+FROM registry.fedoraproject.org/fedora-minimal:latest
+
+# tar is a dependency now because podman-container-cp libpod/container/archive
+# is buggy race condition garbage
+RUN microdnf install -y --setopt=install_weak_deps=False tar zstd
 
 WORKDIR /api/config
 

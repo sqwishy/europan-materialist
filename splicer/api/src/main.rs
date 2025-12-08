@@ -75,8 +75,8 @@ impl Default for Config {
             user_agent: "europan-materialist/0 (materialist.pages.dev)".to_string(),
             publish_image: "splicer-publish".to_string(),
             build_image: "splicer-build".to_string(),
-            work_inner: "/tmp/splicer-api-work".to_string(),
-            work_outer: "/tmp/splicer-api-work".to_string(),
+            work_inner: "/tmp/spl-api-work".to_string(),
+            work_outer: "/tmp/spl-api-work".to_string(),
             vanilla_image: "barotrauma".to_string(),
             secrets_volume: "materialist-secrets".to_string(),
             /* project name when deploying with cloudflare wrangler */
@@ -169,17 +169,26 @@ pub struct SystemMsg;
 async fn async_main(config: Config) -> anyhow::Result<()> {
     let cfg = Arc::new(config);
 
-    let (sys_s, sys_r) = kanal::bounded_async::<SystemMsg>(0);
+    let fds = unsafe {
+        libsystemd_sys::daemon::sd_listen_fds(/* 1 unsets LISTEN_* env vars */ 1)
+    };
 
-    let listener = tokio::net::TcpListener::bind(&cfg.www)
-        .await
-        .context("bind to listen address")?;
+    let listener = if fds > 0 {
+        butt!("using socket activated listener");
+        use std::os::fd::FromRawFd;
+        let std = unsafe { std::net::TcpListener::from_raw_fd(3) };
+        std.set_nonblocking(true)
+            .context("set listener non-blocking")?;
+        tokio::net::TcpListener::from_std(std).context("listener to tokio")?
+    } else {
+        tokio::net::TcpListener::bind(&cfg.www)
+            .await
+            .context("bind to listen address")?
+    };
 
     let db_connection = db::connect(&cfg.db).context("open database")?;
 
     let tasks = BackgroundTasks::new();
-
-    let (db_s, db_r) = kanal::bounded_async(3);
 
     let podman: podman::Client = httpreq::builder()
         .user_agent(&cfg.user_agent)
@@ -201,6 +210,8 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         .build()?
         .into();
 
+    let (sys_s, sys_r) = kanal::bounded_async::<SystemMsg>(0);
+    let (db_s, db_r) = kanal::bounded_async(3);
     let (pub_s, pub_r) = kanal::bounded_async(128);
 
     let www = www::Server {
@@ -508,7 +519,8 @@ pub(crate) mod publish {
 
             for db::NewPublishFragment { fragment, build } in &fragments {
                 tokio::process::Command::new("tar")
-                    .args(["-C", &work, "--zstd", "-x"])
+                    .current_dir(&*work)
+                    .args(["--zstd", "-x"])
                     .to_completion(&fragment[..])
                     .await
                     .and_then(|c| c.into_stdout().map(drop))
@@ -529,7 +541,7 @@ pub(crate) mod publish {
             let create = json!({
                 "name": format!("materialist-publish-{}", pk),
                 "image": &self.cfg.publish_image,
-                "image_volume_mode": "tmpfs",
+                "pod": "spl-net",
                 "env": {
                     "CI": "1",
                     "PROJECT_NAME": &self.cfg.deploy_site,
@@ -598,8 +610,7 @@ pub(crate) mod publish {
              * this will return if res is an Err(_)
              * but shouldn't this save a PublishResult with exit code -1 or something? */
             let (output, exit_code) = res?;
-            let public_url =
-                format!("https://{}.pages.dev/{}/", self.cfg.deploy_site, pk);
+            let public_url = format!("https://{}.pages.dev/", self.cfg.deploy_site);
             let result = db::PublishResult { pk, exit_code, output, public_url };
             self.db
                 .save_publish_result(result)
@@ -1227,17 +1238,14 @@ pub(crate) mod www {
 
             for (file_pk, data) in &files {
                 tokio::process::Command::new("tar")
-                    .args([
-                        "-C",
-                        &work,
-                        &format!("--one-top-level={file_pk}"),
-                        "--zstd",
-                        "-x",
-                    ])
+                    .current_dir(&*work)
+                    .args([&format!("--one-top-level={file_pk}"), "--zstd", "-x"])
                     .to_completion(&data[..])
                     .await
                     .and_then(|c| c.into_stdout().map(drop))
-                    .with_context(|| oof![file ~ *file_pk, build ~ pk])
+                    .with_context(
+                        || oof![file ~ *file_pk, build ~ pk, work ~ work.clone()],
+                    )
                     .map_err(internal_error)?;
             }
 
@@ -1273,6 +1281,7 @@ pub(crate) mod www {
             let create = json!({
                 "name": format!("materialist-build-{}", pk),
                 "image": cfg.build_image,
+                "pod": "spl-net",
                 "terminal": true,
                 "command": command,
                 "mounts": [{
