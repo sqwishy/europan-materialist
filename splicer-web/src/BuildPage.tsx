@@ -14,7 +14,8 @@ import { Toggle } from "./Input"
 
 
 type Model =
-	{ name: string,
+	{ pk: number | null,
+		name: string,
 		items: ItemWizard.Params[],
 		showOutput: boolean }
 
@@ -22,7 +23,7 @@ type Model =
 const isSelected = ({ isSelected }: { isSelected: boolean }) => isSelected
 
 
-export const BuildNew = () => {
+export const BuildPage = () => {
 	const params = useParams()
 	const location = useLocation()
 	const navigate = useNavigate()
@@ -30,6 +31,7 @@ export const BuildNew = () => {
 	const remotes = createRemotes()
 
 	const [model, setModel] = createStore<Model>({
+		pk: null,
 		name: "",
 		items: [],
 		showOutput: false,
@@ -51,6 +53,8 @@ export const BuildNew = () => {
 		const build = getBuild()?.loaded()
 		if (!build)
 			return;
+		if (model.pk == build.pk)
+			return;
 		setModel("name", build.name)
 		setModel(
 			"items",
@@ -64,7 +68,8 @@ export const BuildNew = () => {
 		let build;
 		if (   (buildResource = getBuild())
 		    && (build = buildResource.loaded())
-			  && !(build.published))
+		    && !(build.published)
+		    && (build.exit_code == 0))
 			setTimeout(buildResource.refetch, 5000)
 	})
 
@@ -101,7 +106,7 @@ export const BuildNew = () => {
 		wrapResource(createResource(
 			F.ignoresFirstCall(async () => {
 				submitBuild.mutate()
-				navigate(`/b/`)
+				navigate(`/b/`, { scroll: false })
 				await downloadAll.refetch()
 				await submitBuild.refetch()
 				await waitOnPublish()?.refetch()
@@ -110,7 +115,7 @@ export const BuildNew = () => {
 	createEffect(() => {
 		let pk;
 		if (pk = submitBuild.loaded()?.pk)
-			navigate(`/b/${pk}/`)
+			navigate(`/b/${pk}/`, { scroll: false })
 	})
 
 	///
@@ -380,7 +385,7 @@ export const BuildNew = () => {
 							{p =>
 								<>
 								<span>
-									<a href={p().public_url} target="_blank">view</a>
+									<a href={p().public_url + params.pk} target="_blank">view</a>
 								</span>
 								<span class="smol">
 									<i>code {p().exit_code}; {p().exit_code == 0 ? "ok" : "error"}</i>

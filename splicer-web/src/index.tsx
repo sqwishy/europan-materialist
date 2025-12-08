@@ -3,7 +3,7 @@
 import { render, ErrorBoundary, Show } from 'solid-js/web';
 import { Router, Route, Navigate } from '@solidjs/router'
 
-import { BuildNew } from "./BuildNew"
+import { BuildPage } from "./BuildPage"
 import { Landing } from "./Landing"
 
 // const BUILD = {
@@ -18,7 +18,7 @@ const Main = (props: {}) => {
 		<ErrorBoundary fallback={DumbErrorMessage}>
 			<Router base={import.meta.env.BASE_URL} /*explicitLinks={true}*/>
 				<Route path="/" component={Landing} />
-				<Route path={["/b/", "/b/:pk/"]} component={BuildNew} />
+				<Route path={["/b/", "/b/:pk/"]} component={BuildPage} />
 			</Router>
 		</ErrorBoundary>
 	)
