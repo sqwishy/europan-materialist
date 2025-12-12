@@ -18,107 +18,17 @@ use tokio::{
 
 use kanal::{AsyncReceiver as Receiver, AsyncSender as Sender};
 
+use api_config::Config;
+
 pub(crate) mod ansi;
 pub(crate) mod logging;
 pub(crate) mod no_args;
 
 pub const BARO_APPID: &'static str = "602960";
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
-pub struct Config {
-    pub www: std::net::SocketAddr,
-    pub db: String,
-    pub debug_auth: String,
-    pub steamcmd_url: Url,
-    pub steamcmd_concurrency: u8,
-    pub steamcommunity_url: Url,
-    pub steamcommunity_concurrency: u8,
-    #[serde(with = "crate::no_args::opt_duration_ms")]
-    pub steamcommunity_read_timeout: Option<Duration>,
-    pub podman_unix: String,
-    pub podman_concurrency: u8,
-    pub user_agent: String,
-    pub publish_image: String,
-    pub build_image: String,
-    /* path in container to temporary files shared with build-image and publish-image */
-    pub work_inner: String,
-    /* path on host to work-inner;
-     * to be specified as bind mounts when creating containers of build-image and publish-image */
-    pub work_outer: String,
-    pub vanilla_image: String,
-    /* A volume containing a file named `cloudflare` that looks like;
-     * CLOUDFLARE_ACCOUNT_ID=...
-     * CLOUDFLARE_API_TOKEN=... */
-    pub secrets_volume: String,
-    pub deploy_site: String,
-    // /// user accessible url to deploy_site
-    // pub deploy_url: String,
-    #[serde(with = "crate::no_args::duration_ms")]
-    pub wait_on_publish_poll_interval: Duration,
-    pub response_headers: crate::no_args::headers::ExtraHeaders,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            www: "127.0.0.1:8847".parse().unwrap(),
-            db: "/tmp/materialist-rs.sqlite".to_string(),
-            debug_auth: "".to_string(),
-            steamcmd_url: "http://localhost:8888/".parse().unwrap(),
-            steamcmd_concurrency: 3,
-            steamcommunity_url: "https://steamcommunity.com/".parse().unwrap(),
-            steamcommunity_concurrency: 4,
-            steamcommunity_read_timeout: Duration::from_secs(30).into(),
-            podman_unix: "/run/user/1000/podman/podman.sock".parse().unwrap(),
-            podman_concurrency: 8,
-            user_agent: "europan-materialist/0 (materialist.pages.dev)".to_string(),
-            publish_image: "splicer-publish".to_string(),
-            build_image: "splicer-build".to_string(),
-            work_inner: "/tmp/spl-api-work".to_string(),
-            work_outer: "/tmp/spl-api-work".to_string(),
-            vanilla_image: "barotrauma".to_string(),
-            secrets_volume: "materialist-secrets".to_string(),
-            /* project name when deploying with cloudflare wrangler */
-            deploy_site: "materialist-next".to_string(),
-            // deploy_url: "https://materialist-next.pages.dev/".to_string(),
-            wait_on_publish_poll_interval: Duration::from_millis(500),
-            response_headers: no_args::headers::ExtraHeaders(vec![
-                (
-                    axum::http::header::HeaderName::from_static(
-                        "access-control-allow-origin",
-                    ),
-                    axum::http::header::HeaderValue::from_static("*"),
-                ),
-                (
-                    axum::http::header::HeaderName::from_static(
-                        "access-control-allow-methods",
-                    ),
-                    axum::http::header::HeaderValue::from_static("POST, GET, OPTIONS"),
-                ),
-            ]),
-        }
-    }
-}
-
-impl Config {
-    pub fn inner_work_dir_for_build(&self, pk: i64) -> String {
-        format!("{}/{}-build", self.work_inner, pk)
-    }
-    pub fn outer_work_dir_for_build(&self, pk: i64) -> String {
-        format!("{}/{}-build", self.work_outer, pk)
-    }
-    pub fn inner_work_dir_for_publish(&self, pk: i64) -> String {
-        format!("{}/{}-publish", self.work_inner, pk)
-    }
-    pub fn outer_work_dir_for_publish(&self, pk: i64) -> String {
-        format!("{}/{}-publish", self.work_outer, pk)
-    }
-}
-
 fn main() {
     let config: Config = {
-        let mut no_args = no_args::from_argv("materialist", "materialist.toml");
+        let mut no_args = no_args::from_argv("materialist", "materialist.kdl");
         let _ = no_args.canonicalize();
         butt!("using config"; "path" => no_args.path().display());
         match no_args.read_and_parse() {
@@ -181,7 +91,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
             .context("set listener non-blocking")?;
         tokio::net::TcpListener::from_std(std).context("listener to tokio")?
     } else {
-        tokio::net::TcpListener::bind(&cfg.www)
+        tokio::net::TcpListener::bind(&cfg.www.listen)
             .await
             .context("bind to listen address")?
     };
@@ -191,22 +101,26 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
     let tasks = BackgroundTasks::new();
 
     let podman: podman::Client = httpreq::builder()
-        .user_agent(&cfg.user_agent)
-        .unix_socket(&cfg.podman_unix)
-        .limit(cfg.podman_concurrency)
+        .user_agent(&cfg.podman.user_agent)
+        .unix_socket(&cfg.podman.unix)
+        .read_timeout(cfg.podman.read_timeout)
+        .limit(cfg.podman.concurrency)
         .build()?
         .into();
 
     let steamcmd: steamcmd::Client = httpreq::builder()
-        .user_agent(&cfg.user_agent)
-        .limit(cfg.steamcmd_concurrency)
+        .user_agent(&cfg.steamcmd.user_agent)
+        .unix_socket(&cfg.steamcmd.unix)
+        .read_timeout(cfg.steamcmd.read_timeout)
+        .limit(cfg.steamcmd.concurrency)
         .build()?
         .into();
 
     let steamweb: steamweb::Client = httpreq::builder()
-        .user_agent(&cfg.user_agent)
-        .limit(cfg.steamcommunity_concurrency)
-        .read_timeout(cfg.steamcommunity_read_timeout)
+        .user_agent(&cfg.steamcommunity.user_agent)
+        .unix_socket(&cfg.steamcommunity.unix)
+        .read_timeout(cfg.steamcommunity.read_timeout)
+        .limit(cfg.steamcommunity.concurrency)
         .build()?
         .into();
 
@@ -224,6 +138,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         steamcmd,
         steamweb,
         publish: pub_s,
+        // inflight: Default::default(),
     };
 
     let publish = publish::Server {
@@ -235,7 +150,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         podman,
     };
 
-    info!("listening"; "addr" => www.listener.local_addr().as_ref().unwrap_or(&cfg.www));
+    info!("listening"; "addr" => www.listener.local_addr().as_ref().unwrap_or(&cfg.www.listen));
 
     let (db_thread_s, db_thread_r) = kanal::bounded_async::<_>(0);
     let db_thread = std::thread::Builder::new()
@@ -540,11 +455,11 @@ pub(crate) mod publish {
 
             let create = json!({
                 "name": format!("materialist-publish-{}", pk),
-                "image": &self.cfg.publish_image,
+                "image": &self.cfg.publish.image,
                 "pod": "spl-net",
                 "env": {
                     "CI": "1",
-                    "PROJECT_NAME": &self.cfg.deploy_site,
+                    "PROJECT_NAME": &self.cfg.publish.deploy_site,
                 },
                 "mounts": [{
                     "Type": "bind",
@@ -553,7 +468,7 @@ pub(crate) mod publish {
                 }],
                 "terminal": true,
                 "volumes": [{
-                    "Name": &self.cfg.secrets_volume,
+                    "Name": &self.cfg.publish.secrets_volume,
                     "SubPath": "cloudflare",
                     "Dest": "/run/secrets/cloudflare",
                 }],
@@ -610,7 +525,9 @@ pub(crate) mod publish {
              * this will return if res is an Err(_)
              * but shouldn't this save a PublishResult with exit code -1 or something? */
             let (output, exit_code) = res?;
-            let public_url = format!("https://{}.pages.dev/", self.cfg.deploy_site);
+            /* FIXME write this to build or build item or something */
+            let public_url =
+                format!("https://{}.pages.dev/", self.cfg.publish.deploy_site);
             let result = db::PublishResult { pk, exit_code, output, public_url };
             self.db
                 .save_publish_result(result)
@@ -855,7 +772,7 @@ pub(crate) mod www {
     use std::borrow::Cow;
     use std::collections::BTreeMap;
     use std::net::IpAddr;
-    use std::sync::Arc;
+    use std::sync::{atomic::AtomicUsize, Arc};
     use std::time::Duration;
 
     use axum::{
@@ -915,7 +832,11 @@ pub(crate) mod www {
         pub steamcmd: steamcmd::Client,
         pub steamweb: steamweb::Client,
         pub publish: Sender<publish::Msg>,
+        // pub inflight: InFlight,
     }
+
+    // #[derive(Debug, Default, Clone)]
+    // pub struct InFlight(Arc<AtomicUsize>);
 
     fn path_for_workshop_item(pk: i64) -> String {
         format!("/workshop-item/{pk}/")
@@ -965,6 +886,7 @@ pub(crate) mod www {
                 .layer(Extension(self.publish))
                 .layer(Extension(self.db))
                 .layer(Extension(self.tasks))
+                // .layer(Extension(self.inflight))
                 // .layer(Extension(FragmentBuildTasks::new()))
                 .layer(Extension(RateLimit::new()))
                 .layer(axum::middleware::from_fn(config_headers))
@@ -985,11 +907,12 @@ pub(crate) mod www {
         let mut response = next.run(request).await;
         response
             .headers_mut()
-            .extend(cfg.response_headers.0.iter().cloned());
+            .extend(cfg.www.response_headers.iter().cloned());
         response
     }
 
     async fn log_stuff(
+        // Extension(inflight): Extension<InFlight>,
         request: axum::extract::Request,
         next: axum::middleware::Next,
     ) -> Response {
@@ -1010,7 +933,7 @@ pub(crate) mod www {
     ) -> Response {
         const AUTHORIZATION: HeaderName = HeaderName::from_static("authorization");
 
-        if cfg.debug_auth.is_empty() {
+        if cfg.www.debug_auth.is_empty() {
             return not_found_response();
         }
 
@@ -1022,7 +945,7 @@ pub(crate) mod www {
             return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
         };
 
-        if auth != cfg.debug_auth {
+        if auth != cfg.www.debug_auth {
             return (StatusCode::FORBIDDEN, "forbidden").into_response();
         }
 
@@ -1182,7 +1105,6 @@ pub(crate) mod www {
         use crate::podman::traits::*;
         use std::fs;
         use std::iter::once;
-        use tokio::task;
 
         let req: db::SaveBuild = parse_json_with_limit(body, FOUR_KILOBYTES).await?;
 
@@ -1280,7 +1202,7 @@ pub(crate) mod www {
 
             let create = json!({
                 "name": format!("materialist-build-{}", pk),
-                "image": cfg.build_image,
+                "image": cfg.build.image,
                 "pod": "spl-net",
                 "terminal": true,
                 "command": command,
@@ -1290,7 +1212,7 @@ pub(crate) mod www {
                     "Destination": "/baro/mod",
                 }],
                 "volumes": [
-                    {"name": cfg.vanilla_image, "dest": "/baro/vanilla"},
+                    {"name": cfg.build.vanilla, "dest": "/baro/vanilla"},
                 ],
             });
 
@@ -1484,7 +1406,7 @@ pub(crate) mod www {
                 break (exit_code, public_url);
             }
 
-            tokio::time::sleep(cfg.wait_on_publish_poll_interval).await;
+            tokio::time::sleep(cfg.www.wait_on_publish_poll_interval).await;
         };
 
         return json_response(json!({
@@ -1639,7 +1561,7 @@ pub(crate) mod www {
 
             /* this should work on both items and collections */
             let details: WorkshopItemFileDetails = steamweb
-                .filedetails(&cfg.steamcommunity_url, &workshopid)
+                .filedetails(&cfg.steamcommunity.url, &workshopid)
                 .await
                 .map_err(not_found)?;
 
@@ -1657,7 +1579,7 @@ pub(crate) mod www {
             }
 
             if let Ok(log) = steamweb
-                .changelog(&cfg.steamcommunity_url, &details.workshopid)
+                .changelog(&cfg.steamcommunity.url, &details.workshopid)
                 .await
             {
                 drop(steamweb);
@@ -1682,7 +1604,7 @@ pub(crate) mod www {
             /* FIXME we already made a filedetails request, don't make a second one here */
 
             if let Ok(collection) = steamweb
-                .collection(&cfg.steamcommunity_url, &details.workshopid)
+                .collection(&cfg.steamcommunity.url, &details.workshopid)
                 .await
             {
                 drop(steamweb);
@@ -1745,7 +1667,7 @@ pub(crate) mod www {
             .await
             .with_context(|| oof![s ~ "acquire steamweb"])
             .map_err(internal_error)?
-            .changelog(&cfg.steamcommunity_url, &item.workshopid)
+            .changelog(&cfg.steamcommunity.url, &item.workshopid)
             .await
             .with_context(|| oof![s ~ "steamweb changelog"])
             .map_err(internal_error)?
@@ -1762,7 +1684,7 @@ pub(crate) mod www {
                 .await
                 .with_context(|| oof![s ~ "acquire steamcmd"])
                 .map_err(internal_error)?
-                .download(&cfg.steamcmd_url, &item.workshopid)
+                .download(&cfg.steamcmd.url, &item.workshopid)
                 .await
                 .with_context(|| oof![s ~ "steamcmd download"])
                 .map_err(internal_error)?;
@@ -1772,7 +1694,7 @@ pub(crate) mod www {
                 .await
                 .with_context(|| oof![s ~ "acquire steamweb"])
                 .map_err(internal_error)?
-                .changelog(&cfg.steamcommunity_url, &item.workshopid)
+                .changelog(&cfg.steamcommunity.url, &item.workshopid)
                 .await
                 .with_context(|| oof![s ~ "steamweb changelog"])
                 .map_err(internal_error)?
@@ -3516,14 +3438,14 @@ pub(crate) mod httpreq {
             limit: 32,
             user_agent: "",
             unix_socket: "",
-            read_timeout: None,
+            read_timeout: Duration::ZERO,
         }
     }
 
     pub struct Builder<'a> {
         inner: reqwest::ClientBuilder,
         limit: u8,
-        read_timeout: Option<Duration>,
+        read_timeout: Duration,
         user_agent: &'a str,
         unix_socket: &'a str,
     }
@@ -3534,7 +3456,7 @@ pub(crate) mod httpreq {
             self
         }
 
-        pub fn read_timeout(mut self, v: Option<Duration>) -> Self {
+        pub fn read_timeout(mut self, v: Duration) -> Self {
             self.read_timeout = v;
             self
         }
@@ -3557,7 +3479,7 @@ pub(crate) mod httpreq {
 
             inner = inner.connect_timeout(Duration::from_secs(20));
 
-            if let Some(read_timeout) = read_timeout {
+            if read_timeout > Duration::ZERO {
                 inner = inner.read_timeout(read_timeout);
             }
 
