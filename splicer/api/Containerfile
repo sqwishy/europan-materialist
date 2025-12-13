@@ -39,6 +39,7 @@ ADD splicer/api/Cargo.toml \
 
 ADD splicer/autodaemon        /build/autodaemon
 ADD splicer/stupid-rate-limit /build/stupid-rate-limit
+ADD splicer/api-config        /build/api-config
 ADD splicer/api               /build/api
 
 RUN cargo build --locked --offline --release ${BUILD_ARGS}

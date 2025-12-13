@@ -40,7 +40,7 @@ exception_handlers = {
 HTTP_BAD_REQUEST = Response("bad request", status_code=400)
 HTTP_NOT_FOUND = Response("not found", status_code=404)
 HTTP_TOO_MANY_REQUESTS = Response(
-    "this computer too busy (x . x) ~~zzZ", status_code=429
+    "this computer too busy (x . x) ~~zzZ", status_code=503
 )
 HTTP_SERVER_ERROR = Response(
     "something went fucky wucky on the computer doing the website and the thing didn't work, sorry",

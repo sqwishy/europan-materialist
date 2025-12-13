@@ -861,6 +861,7 @@ pub(crate) mod www {
                 .route("/build/{pk}/fragment/", get(get_build_fragment))
                 .route("/republish/", post(republish))
                 .route("/rate-limits/", get(dump_rate_limits))
+                .route("/ping-steamcmd/", get(ping_steamcmd))
                 .layer(axum::middleware::from_fn(require_debug_auth));
 
             let app = Router::new()
@@ -1439,6 +1440,25 @@ pub(crate) mod www {
         }))
     }
 
+    async fn ping_steamcmd(
+        Extension(steamcmd): Extension<steamcmd::Client>,
+        Extension(cfg): Extension<Arc<Config>>,
+    ) -> Result<String, Response> {
+        /* XXX FIXME why is RequestBuilderExt in podman instead of httpreq lmao */
+        use crate::podman::traits::*;
+
+        Ok(steamcmd
+            .acquire()
+            .await
+            .with_context(|| oof![s ~ "acquire steamcmd"])
+            .map_err(internal_error)?
+            .post(cfg.steamcmd.url.join("/ping").map_err(internal_error)?)
+            .expect_status(StatusCode::OK)
+            .await
+            .with_context(|| oof![s ~ "steamcmd ping"])
+            .map_err(internal_error)?)
+    }
+
     #[derive(serde::Deserialize)]
     struct ListRequest {
         workshopid: WorkshopIdOrUrl,
@@ -1684,7 +1704,11 @@ pub(crate) mod www {
                 .await
                 .with_context(|| oof![s ~ "acquire steamcmd"])
                 .map_err(internal_error)?
-                .download(&cfg.steamcmd.url, &item.workshopid)
+                .download(
+                    &cfg.steamcmd.url,
+                    &item.workshopid,
+                    cfg.steamcmd.prefer_wait,
+                )
                 .await
                 .with_context(|| oof![s ~ "steamcmd download"])
                 .map_err(internal_error)?;
@@ -1987,9 +2011,15 @@ pub(crate) mod steamcmd {
             &self,
             base: &reqwest::Url,
             workshopid: &WorkshopId,
+            prefer_wait: u32,
         ) -> anyhow::Result<DownloadedFile> {
             let url = download_url(base, workshopid);
-            let response = self.post(&url).header("prefer", "wait=20").send().await?;
+
+            let response = self
+                .post(&url)
+                .header("prefer", format!("wait={prefer_wait}"))
+                .send()
+                .await?;
 
             /* TODO handle a busy response */
             if let Err(err) = response.error_for_status_ref() {
@@ -3537,6 +3567,7 @@ pub(crate) mod httpreq {
         }
     }
 
+    /* FIXME is this supposed to be used? */
     impl<'l> BorrowedClient<'l> {
         pub async fn get_text(&self, url: &str) -> Result<String> {
             let response: reqwest::Response = self

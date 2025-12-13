@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::time::Duration;
+use std::ops::{Deref, DerefMut};
 
 use http::header::{HeaderName, HeaderValue};
 use url::Url;
@@ -52,7 +53,7 @@ pub struct Config {
     pub db: String,
     // pub afk_timer: Duration,
     pub www: WwwConfig,
-    pub steamcmd: HttpReqConfig,
+    pub steamcmd: SteamcmdConfig,
     pub steamcommunity: HttpReqConfig,
     pub podman: HttpReqConfig,
     pub publish: PublishConfig,
@@ -65,6 +66,27 @@ pub struct WwwConfig {
     pub debug_auth: String,
     pub wait_on_publish_poll_interval: Duration,
     pub response_headers: Vec<(HeaderName, HeaderValue)>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SteamcmdConfig {
+    pub prefer_wait: u32,
+    // pub query_string: String,
+    pub httpreq: HttpReqConfig,
+}
+
+impl Deref for SteamcmdConfig {
+    type Target = HttpReqConfig;
+
+    fn deref(&self) -> &Self::Target {
+        &self.httpreq
+    }
+}
+
+impl DerefMut for SteamcmdConfig {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.httpreq
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -129,7 +151,7 @@ impl<'s> Decode<'s> {
                 // "afk-timer-sec" => self.expect_duration_sec(&mut cfg.afk_timer, node),
                 "www" => self.expect_www(&mut cfg.www, node),
                 "steamcommunity" => self.expect_httpreq(&mut cfg.steamcommunity, node),
-                "steamcmd" => self.expect_httpreq(&mut cfg.steamcmd, node),
+                "steamcmd" => self.expect_steamcmd(&mut cfg.steamcmd, node),
                 "podman" => self.expect_httpreq(&mut cfg.podman, node),
                 "build" => self.expect_build(&mut cfg.build, node),
                 "publish" => self.expect_publish(&mut cfg.publish, node),
@@ -171,6 +193,16 @@ impl<'s> Decode<'s> {
         {
             Some(i) => *v = i,
             None => self.expected("single number in range 0..255", node),
+        }
+    }
+
+    fn expect_u32(&mut self, v: &mut u32, node: &KdlNode) {
+        match single_value(node)
+            .and_then(|v| v.as_integer())
+            .and_then(|i| u32::try_from(i).ok())
+        {
+            Some(i) => *v = i,
+            None => self.expected("single number in range 0..4 billion", node),
         }
     }
 
@@ -239,6 +271,25 @@ impl<'s> Decode<'s> {
                 "wait-on-publish-poll-interval-ms" => {
                     self.expect_duration_ms(&mut v.wait_on_publish_poll_interval, node)
                 }
+                _ => self.unexpected(node),
+            }
+        }
+    }
+
+    fn expect_steamcmd(&mut self, v: &mut SteamcmdConfig, node: &KdlNode) {
+        let Some(doc) = node.children() else {
+            self.expected("children", node);
+            return;
+        };
+
+        for node in doc.nodes() {
+            match node.name().value() {
+                "prefer-wait-sec" => self.expect_u32(&mut v.prefer_wait, node),
+                "url" => self.expect_url(&mut v.url, node),
+                "unix" => self.expect_string(&mut v.unix, node),
+                "concurrency" => self.expect_u8(&mut v.concurrency, node),
+                "user-agent" => self.expect_string(&mut v.user_agent, node),
+                "read-timeout-ms" => self.expect_duration_ms(&mut v.read_timeout, node),
                 _ => self.unexpected(node),
             }
         }
@@ -350,12 +401,15 @@ impl Default for Config {
                     ),
                 ],
             },
-            steamcmd: HttpReqConfig {
-                url: "http://localhost:8888/".parse::<Url>().unwrap().into(),
-                unix: Default::default(),
-                concurrency: 3,
-                user_agent: "europan-materialist/0 (materialist.pages.dev)".to_string(),
-                read_timeout: Default::default(),
+            steamcmd: SteamcmdConfig {
+                prefer_wait: 180,
+                httpreq: HttpReqConfig {
+                    url: "http://localhost:8888/".parse::<Url>().unwrap().into(),
+                    unix: Default::default(),
+                    concurrency: 3,
+                    user_agent: "europan-materialist/0 (materialist.pages.dev)".to_string(),
+                    read_timeout: Default::default(),
+                }
             },
             steamcommunity: HttpReqConfig {
                 url: "https://steamcommunity.com/".parse::<Url>().unwrap().into(),
@@ -430,6 +484,12 @@ steamcmd {
     url "http://localhost:8888/"
     concurrency 3
     user-agent "europan-materialist/0 (materialist.pages.dev)"
+
+    // a header sent to steamcmd that determines how long wait (in seconds) to begin processing a
+    // request before giving up and returning 503 service unavailable or something.
+    // if this is omitted, it's the same as not waiting, inadvisable as that error will be
+    // propogated to the end user at this time.
+    prefer-wait-sec 180
 }
 
 podman {
