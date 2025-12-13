@@ -25,7 +25,7 @@ use in podman:
 
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 import hashlib
@@ -42,7 +42,8 @@ from subprocess import CompletedProcess, CalledProcessError, PIPE, STDOUT
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import Response
-from starlette.convertors import Convertor, register_url_convertor
+from starlette.convertors import Convertor
+from starlette.middleware import Middleware
 
 import trio
 
@@ -262,7 +263,7 @@ def prefer_wait(request):
                 log.exception("parse wait=", prefer=prefer)
 
 
-async def download(request):
+async def download(request, *, req_s):
     log.butt(request.path_params)
 
     if not (appid := request.path_params.get("app")):
@@ -288,7 +289,7 @@ async def download(request):
 
         if not wait:
             try:
-                request.app.state.req_s.send_nowait(msg)
+                req_s.send_nowait(msg)
             except trio.WouldBlock:
                 return HTTP_TOO_MANY_REQUESTS
 
@@ -299,7 +300,7 @@ async def download(request):
                 # request.is_disconnected() doesn't have an option to
                 # wait for a disconnect. so we'd probably have to do that
                 # ourselves with its non-public API...
-                await request.app.state.req_s.send(msg)
+                await req_s.send(msg)
 
             if cancel_scope.cancelled_caught:
                 return HTTP_TOO_MANY_REQUESTS
@@ -353,61 +354,95 @@ async def zstd_tar(tar_data: bytes) -> bytes:
     return completed.stdout
 
 
-@asynccontextmanager
-async def lifespan(app):
-    retries = max(app.state.args.retries, 1)
+async def ping(request):
+    wait = prefer_wait(request) or 0
+    if wait > 0:
+        await trio.sleep(wait)
+    return Response("pong")
 
-    app.state.args.work.mkdir(mode=0o770, exist_ok=True)
+
+@dataclass
+class Config(object):
+    work_inner: str
+    work_outer: str
+    podman_args: list[str]
+    nsteamcmds: int
+    image: str
+    retries: int
+    afk_secs: float | None
+
+    shutdown: trio.Event
+
+    req_s: trio.MemorySendChannel[DownloadRequest]
+    req_r: trio.MemoryReceiveChannel[DownloadRequest]
+
+    afk_s: trio.MemorySendChannel[float | None]
+    afk_r: trio.MemoryReceiveChannel[float | None]
+
+    def afk_task(self):
+        if self.afk_secs is not None:
+            return partial(
+                afk_shutdown_timer,
+                self.afk_r,
+                afk_secs=self.afk_secs,
+                shutdown=self.shutdown,
+            )
+
+    def one_steamcmd_task(self, i: int):
+        work = self.work_inner / f"{i}"
+        work.mkdir(mode=0o770, exist_ok=True)
+
+        if self.work_outer:
+            work_outer = self.work_outer / f"{i}"
+        else:
+            work_outer = work
+
+        # fmt: off
+        podman_run_args = [
+            "--rm", "-i",
+            "--pull=never",
+            # This is shared with the most so we can remove the downloaded files at
+            # runtime. But it does not need to be backed by a disk.
+            "-v", f"{work_outer}:/root/Steam/steamapps/workshop/content",
+            *self.podman_args, self.image,
+            "+login anonymous",
+        ]
+        # fmt: on
+
+        return partial(run_one_steamcmd, self.req_r, work, podman_run_args, self.retries)
+
+
+@asynccontextmanager
+async def lifespan(app, *, c: Config):
+    log.butt("lifespan going up")
+
+    c.work_inner.mkdir(mode=0o770, exist_ok=True)
 
     async with trio.open_nursery() as nursery:
 
-        req_s, req_r = trio.open_memory_channel(0)
-        with req_s, req_r:
-            app.state.req_s = req_s
-            app.state.req_r = req_r
+        if (afk_task := c.afk_task()) is not None:
+            nursery.start_soon(afk_task)
 
-            log.butt("starting steamcmd in background")
-            steamcmds = []
-            for i in range(app.state.args.steamcmds):
-                work = app.state.args.work / f"{i}"
-                work.mkdir(mode=0o770, exist_ok=True)
+        steamcmds = [
+            await nursery.start(c.one_steamcmd_task(i)) for i in range(c.nsteamcmds)
+        ]
 
-                if app.state.args.work_outer:
-                    work_outer = app.state.args.work_outer / f"{i}"
-                else:
-                    work_outer = work
+        log.butt("lifespan up")
 
-                podman_run_args = [
-                    "--rm",
-                    "-i",
-                    "--pull=never",
-                    # This is shared with the most so we can remove the downloaded files at
-                    # runtime. But it does not need to be backed by a disk.
-                    "-v", f"{work_outer}:/root/Steam/steamapps/workshop/content",
-                    *app.state.args.steamcmd_args,
-                    app.state.args.image,
-                    "+login anonymous",
-                ]
-
-                steamcmds.append(
-                    await nursery.start(
-                        run_one_steamcmd, req_r, work, podman_run_args, retries
-                    )
-                )
-            log.butt("lifespan up")
-            try:
+        try:
+            with c.req_s, c.req_r, c.afk_s, c.afk_r:
                 yield
-            finally:
-                for r in steamcmds:
-                    try:
-                        await r.stdin.send_all(b"\nquit\n")
-                    except (trio.BrokenResourceError, trio.ClosedResourceError):
-                        pass
-                log.butt("lifespan down")
 
+        finally:
+            log.butt("lifespan going down")
 
-# this isn't used, if we have multiple steamcmds we might use this to handle failures idk
-shutdown = trio.Event()
+            for r in steamcmds:
+                try:
+                    await r.stdin.send_all(b"\nquit\n")
+                except (trio.BrokenResourceError, trio.ClosedResourceError):
+                    pass
+
+            log.butt("lifespan down")
 
 
 class AlnumConvertor(Convertor):
@@ -415,13 +450,55 @@ class AlnumConvertor(Convertor):
     convert = to_string = lambda v: v
 
 
-register_url_convertor("alnum", AlnumConvertor)
+class AfkShutdownMiddleware(object):
+    """sends to the afk_shutdown_timer"""
 
-routes = [
-    Route("/download/{app}/{item:alnum}.{format}", download, methods=["post"]),
-]
+    def __init__(self, app, afk_s):
+        self.app = app
+        self.afk_s = afk_s
+        self.inflight = 0
+        self.inflight_lock = trio.Lock()
 
-app = Starlette(routes=routes, lifespan=lifespan, exception_handlers=exception_handlers)
+    async def __call__(self, scope, receive, send):
+        is_http = scope["type"] == "http"
+        if is_http:
+            async with self.inflight_lock:
+                self.inflight += 1
+                if self.inflight == 1:
+                    await self.afk_s.send(None)
+
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if is_http:
+                async with self.inflight_lock:
+                    self.inflight -= 1
+                    if self.inflight == 0:
+                        await self.afk_s.send(trio.current_time())
+
+
+async def afk_shutdown_timer(afk_r, *, afk_secs, shutdown):
+    """sets shutdown after some timeout passes"""
+
+    afk_at = trio.current_time()
+
+    while True:
+
+        if afk_at is None:
+            ctx = nullcontext()
+        else:
+            ctx = trio.move_on_at(afk_at + afk_secs)
+
+        with ctx as cancel_scope:
+            try:
+                afk_at = await afk_r.receive()
+            except (trio.EndOfChannel, trio.ClosedResourceError):
+                break
+
+        if cancel_scope and cancel_scope.cancelled_caught:
+            log.butt("afk shutdown")
+            shutdown.set()
+            break
 
 
 class config(materialist.core.config):
@@ -433,6 +510,9 @@ def main():
 
     from materialist.core import hypercorn_config
     from hypercorn.trio import serve
+    from starlette.convertors import register_url_convertor
+
+    register_url_convertor("alnum", AlnumConvertor)
 
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     # fmt: off
@@ -442,13 +522,52 @@ def main():
     parser.add_argument("-r", "--retries", default=3, type=int, help="max download retry attempts")
     parser.add_argument("-w", "--work", default="/tmp/spl-steamcmd-work", type=Path, help="temporary file download path. cannot be volume name")
     parser.add_argument("--work-outer", default=None, type=Path, help="path to --work passed to steamcmd with podman-remote. defaults to --work. If this is program is run in a container with --work bind mounted in, --work-outer should be the path on the host. This way, this program can read what steamcmd writes.")
-    parser.add_argument("-s", "--steamcmd-args", default=list(), action="append", type=str, help="extra podman args for steamcmd")
+    parser.add_argument("-s", "--podman-args", default=list(), action="append", type=str, help="extra podman args for steamcmd")
+    parser.add_argument("--afk-timer", default=None, type=float, help="number of minutes to shut down automatically after not receiving any requests")
     # fmt: on
     args = parser.parse_args()
 
     log.debug(args)
 
-    app.state.args = args
+    shutdown = trio.Event()
+    afk_s, afk_r = trio.open_memory_channel(16)
+    req_s, req_r = trio.open_memory_channel(0)
+
+    c = Config(
+        nsteamcmds=args.steamcmds,
+        work_inner=args.work,
+        work_outer=args.work_outer,
+        podman_args=args.podman_args,
+        image=args.image,
+        retries=max(args.retries, 1),
+        afk_secs=args.afk_timer * 60.0,
+        shutdown=shutdown,
+        afk_s=afk_s,
+        afk_r=afk_r,
+        req_s=req_s,
+        req_r=req_r,
+    )
+
+    if c.afk_secs is None:
+        middleware = []
+    else:
+        middleware = [Middleware(AfkShutdownMiddleware, afk_s=afk_s)]
+
+    routes = [
+        Route(
+            "/download/{app}/{item:alnum}.{format}",
+            partial(download, req_s=req_s),
+            methods=["post"],
+        ),
+        Route("/ping", ping, methods=["post"]),
+    ]
+
+    app = Starlette(
+        routes=routes,
+        lifespan=partial(lifespan, c=c),
+        exception_handlers=exception_handlers,
+        middleware=middleware,
+    )
 
     if args.listen:
         config.bind = args.listen
