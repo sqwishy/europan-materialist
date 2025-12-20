@@ -47,43 +47,40 @@ create table "content-package"
     strict;
 
 
+create table "mod-list"
+    ( pk                integer primary key )
+    strict;
+
+
+/* Has an implicit rowid primary key.
+ * Lax validation, allows duplicate items and sort numbers ...
+ * ... it's "best effort". */
+create table "mod-list-item"
+    ( list              integer not null
+                        references "mod-list" (pk)
+    , item              integer not null
+                        references "workshop-item" (pk)
+    , sort              integer not null )
+    strict;
+
+create index "mod-list-item/list"
+          on "mod-list-item" (list);
+
+create index "mod-list-item/item"
+          on "mod-list-item" (item);
+
+
 create table "build"
     ( pk                integer primary key
-    , name              text not null
+                        references "mod-list" (pk)
     , exit_code         integer
     , output            text not null default ''
     , fragment          blob not null default x'' )
     strict;
 
 
--- create table "build-result"
---     ( pk                integer primary key
---                         references "build" (pk)
---     , output            text
---     , fragment          blob )
---     strict;
-
-
-/* No explicit primary key or unique constraint, so has an implicit rowid
- * primary key. Lax validation so allows duplicate items and sort numbers
- * but it's "best effort". */
-create table "build-item"
-    ( build             integer not null
-                        references "build" (pk)
-    , item              integer not null
-                        references "workshop-item" (pk)
-    , sort              integer not null )
-    strict;
-
-create index "build-item/build"
-          on "build-item" (build);
-create index "build-item/item"
-          on "build-item" (item);
-
-
 create table "publish"
     ( pk            integer primary key
-    , public_url    text not null default ''
     , exit_code     integer
     , output        text not null default '' )
     strict;
@@ -93,11 +90,12 @@ create table "publish-item"
     ( publish       integer not null
                     references "publish"
     , build         integer not null
-                    references "build" )
+                    references "build"
+    , url           text not null default '' )
     strict;
 
 create index "publish-item/publish"
-          on "publish-item" (publish);
+          on "publish-item" (publish DESC);
 
 create index "publish-item/build-publish"
-          on "publish-item" (build, publish);
+          on "publish-item" (build, publish DESC);

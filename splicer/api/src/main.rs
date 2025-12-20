@@ -453,10 +453,11 @@ pub(crate) mod publish {
                 .await
                 .with_context(|| oof![s ~ "acquire podman", publish ~ pk])?;
 
+            let pod = Some(&self.cfg.publish.container.pod).filter(|s| !s.is_empty());
             let create = json!({
                 "name": format!("materialist-publish-{}", pk),
-                "image": &self.cfg.publish.image,
-                "pod": "spl-net",
+                "image": &self.cfg.publish.container.image,
+                "pod": pod,
                 "env": {
                     "CI": "1",
                     "PROJECT_NAME": &self.cfg.publish.deploy_site,
@@ -528,7 +529,7 @@ pub(crate) mod publish {
             /* FIXME write this to build or build item or something */
             let public_url =
                 format!("https://{}.pages.dev/", self.cfg.publish.deploy_site);
-            let result = db::PublishResult { pk, exit_code, output, public_url };
+            let result = db::SavePublishResult { pk, exit_code, output, public_url };
             self.db
                 .save_publish_result(result)
                 .await
@@ -868,16 +869,16 @@ pub(crate) mod www {
                 .route("/ping/", get(ping))
                 .route("/workshop-item/", get(list))
                 .route("/workshop-item/", post(refresh_workshop_item))
-                // .route("/workshop-item/refresh/{id}/", post(refresh_workshop_item))
                 .route("/workshop-item/{pk}/", get(workshop_item_by_pk))
                 .route(
                     "/workshop-item/{pk}/download/",
                     post(download_workshop_item),
                 )
+                .route("/build/", get(list_builds))
                 .route("/build/", post(submit_build))
                 .route("/build/{pk}/", get(get_build))
                 // .route("/build/{pk}/wait/", get(wait_on_build))
-                .route("/publish/{pk}/wait/", get(wait_on_publish))
+                // .route("/build/{pk}/wait-on-publish/", get(wait_on_publish))
                 // .route("/build/{pk}/publish/", get(build_fragments))
                 /* todo guard behind auth */
                 .nest("/x", debug_router)
@@ -888,7 +889,6 @@ pub(crate) mod www {
                 .layer(Extension(self.db))
                 .layer(Extension(self.tasks))
                 // .layer(Extension(self.inflight))
-                // .layer(Extension(FragmentBuildTasks::new()))
                 .layer(Extension(RateLimit::new()))
                 .layer(axum::middleware::from_fn(config_headers))
                 .layer(Extension(Arc::clone(&self.cfg)))
@@ -1089,6 +1089,16 @@ pub(crate) mod www {
             .and_then(json_response)
     }
 
+    async fn list_builds(
+        Extension(db): Extension<db::Client>,
+    ) -> Result<Response, Response> {
+        db.list_builds()
+            .recv_or_busy()
+            .await?
+            .map_err(internal_error)
+            .and_then(json_response)
+    }
+
     /* todo avoid duplicate builds? */
     async fn submit_build(
         // rate: RateLimited,
@@ -1100,14 +1110,13 @@ pub(crate) mod www {
         Extension(podman): Extension<podman::Client>,
         Extension(podman_for_cleanup): Extension<podman::Client>,
         Extension(publish): Extension<Sender<publish::Msg>>,
-        // Extension(build_tasks): Extension<FragmentBuildTasks>,
         body: axum::body::Body,
     ) -> Result<Response, Response> {
         use crate::podman::traits::*;
         use std::fs;
         use std::iter::once;
 
-        let req: db::SaveBuild = parse_json_with_limit(body, FOUR_KILOBYTES).await?;
+        let req: db::SaveModList = parse_json_with_limit(body, FOUR_KILOBYTES).await?;
 
         // rate.limit(COST_BUILD).await.map_err(rate_limited)?;
 
@@ -1115,14 +1124,14 @@ pub(crate) mod www {
 
         bg.spawn(async move {
             let res = db
-                .save_build(req)
+                .save_mod_list(req)
                 .recv_or_busy()
                 .await?
                 .map_err(internal_error)?;
 
             let pk = match res {
-                db::SaveBuildResult::Inserted { pk } => pk,
-                db::SaveBuildResult::Missing { missing } => {
+                db::SaveModListResult::Inserted { pk } => pk,
+                db::SaveModListResult::Missing { missing } => {
                     let value = json!({ "missing": missing });
                     let body = serde_json::to_string(&value)
                         .with_context(|| oof![json ~ logging::dbg(value)])
@@ -1131,8 +1140,15 @@ pub(crate) mod www {
                 }
             };
 
-            let db::BuildItemFiles { files } = db
-                .build_item_files(pk)
+            /* TODO fix our api */
+            let _: () = db
+                .new_build(pk)
+                .recv_or_busy()
+                .await?
+                .map_err(internal_error)?;
+
+            let db::Files { files } = db
+                .mod_list_item_files(pk)
                 .recv_or_busy()
                 .await?
                 .map_err(internal_error)?;
@@ -1201,10 +1217,11 @@ pub(crate) mod www {
             .chain(package_names)
             .collect::<Vec<_>>();
 
+            let pod = Some(&cfg.build.container.pod).filter(|s| !s.is_empty());
             let create = json!({
                 "name": format!("materialist-build-{}", pk),
-                "image": cfg.build.image,
-                "pod": "spl-net",
+                "image": cfg.build.container.image,
+                "pod": pod,
                 "terminal": true,
                 "command": command,
                 "mounts": [{
@@ -1378,43 +1395,34 @@ pub(crate) mod www {
         .map_err(internal_error)?
     }
 
-    // async fn wait_on_build(
+    /* GET /build/{pk}/wait-on-publish/
+     * waits until the build's most recent publish exists and has a non-null exit code
+     * returns SEE OTHER on success */
+    // async fn wait_on_publish(
     //     Path(pk): Path<i64>,
+    //     Extension(cfg): Extension<Arc<Config>>,
     //     Extension(db): Extension<db::Client>,
-    //     Extension(build_tasks): Extension<FragmentBuildTasks>,
     // ) -> Result<Response, Response> {
-    //     if let Some(r) = build_tasks.lock().await.get(&pk).cloned() {
-    //         r.recv().await.map_err(internal_error)?;
-    //     }
+    //     let (exit_code, url) = loop {
+    //         let db::BuildPublished { pk: _, exit_code, url } = db
+    //             .get_build_publish(pk)
+    //             .recv_or_busy()
+    //             .await?
+    //             .map_err(internal_error)?
+    //             .ok_or_else(|| not_found_response())?;
 
-    //     return Ok(see_other(path_for_build(pk)));
+    //         if let Some(exit_code) = exit_code {
+    //             break (exit_code, url);
+    //         }
+
+    //         tokio::time::sleep(cfg.www.wait_on_publish_poll_interval).await;
+    //     };
+
+    //     return json_response(json!({
+    //         "exit_code": exit_code,
+    //         "url": url,
+    //     }));
     // }
-
-    async fn wait_on_publish(
-        Path(pk): Path<i64>,
-        Extension(cfg): Extension<Arc<Config>>,
-        Extension(db): Extension<db::Client>,
-    ) -> Result<Response, Response> {
-        let (exit_code, url) = loop {
-            let db::Publish { pk: _, exit_code, public_url } = db
-                .get_publish(pk)
-                .recv_or_busy()
-                .await?
-                .map_err(internal_error)?
-                .ok_or_else(|| not_found_response())?;
-
-            if let Some(exit_code) = exit_code {
-                break (exit_code, public_url);
-            }
-
-            tokio::time::sleep(cfg.www.wait_on_publish_poll_interval).await;
-        };
-
-        return json_response(json!({
-            "exit_code": exit_code,
-            "public_url": url,
-        }));
-    }
 
     async fn republish(
         Extension(publish): Extension<Sender<publish::Msg>>,
@@ -1848,7 +1856,7 @@ pub(crate) mod www {
     }
 
     /* according to MDN, See Other changes the request method to GET?
-     * xh at least doesn't respect that though, probably because everything rust is dogshit  */
+     * xh at least doesn't respect that though, probably because everything rust is dogshit */
     pub fn see_other<S: AsRef<str>>(s: S) -> Response {
         (StatusCode::SEE_OTHER, [(header::LOCATION, s.as_ref())]).into_response()
     }
@@ -2615,6 +2623,7 @@ pub(crate) mod db {
 
             let sql = r#"INSERT INTO "file" (pk, size, etag, data)
                               VALUES (?, ?, ?, ?)
+                              dl
                          ON CONFLICT (etag) WHERE etag IS NOT null
                        DO UPDATE SET pk=pk
                            RETURNING pk"#;
@@ -2759,14 +2768,14 @@ pub(crate) mod db {
             Ok((did_insert, row_ts))
         }
 
-        pub fn build_item_files(&mut self, pk: i64) -> Result<BuildItemFiles> {
+        pub fn mod_list_item_files(&mut self, pk: i64) -> Result<Files> {
             let tx = self.db.transaction()?;
 
             let sql = r#"SELECT w.pk, f.data
-                           FROM "build-item"    i
+                           FROM "mod-list-item" i
                       LEFT JOIN "workshop-item" w ON w.pk = i.item
                       LEFT JOIN "file"          f ON f.pk = w.file
-                          WHERE i.build=?1"#;
+                          WHERE i.list=?1"#;
             let files: Vec<(i64, Box<[u8]>)> = tx
                 .prepare_cached(sql)
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
@@ -2777,51 +2786,64 @@ pub(crate) mod db {
                          params ~ logging::dbg((pk,)))
                 })?;
 
-            Ok(BuildItemFiles { files })
+            Ok(Files { files })
         }
 
         pub fn get_build(&mut self, pk: i64) -> Result<Option<Build>> {
             let tx = self.transaction()?;
 
-            let sql = r#"SELECT b.name, b.exit_code, b.output, length(b.fragment),
-                                (SELECT MAX(i.publish)
-                                   FROM "publish-item" i
-                                  WHERE i.build = b.pk)
+            let sql = r#"SELECT b.exit_code, b.output, length(b.fragment),
+                                pi.publish, pi.url, p.exit_code
                            FROM "build"        b
+                      LEFT JOIN "publish-item" pi
+                             ON pi.rowid = (SELECT rowid
+                                              FROM "publish-item"
+                                             WHERE build = b.pk
+                                          ORDER BY publish DESC
+                                             LIMIT 1)
+                      LEFT JOIN "publish" p 
+                             ON p.pk = pi.publish
                           WHERE b.pk=?1"#;
             let build: Option<Build> = tx
                 .prepare_cached(sql)
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
-                .query_row(params![pk], getscols![_, _, _, _, _])
+                .query_row(params![pk], |row| {
+                    Ok(Build {
+                        pk,
+                        exit_code: row.get(0)?,
+                        output: row.get(1)?,
+                        items: vec![],
+                        fragment: match row.get(2)? {
+                            size if size > 0 => Some(BuildFragment { size }),
+                            _ => None,
+                        },
+                        published: match (row.get(3)?, row.get(4)?, row.get(5)?) {
+                            (Some(pk), Some(url), Some(exit_code)) => {
+                                Some(BuildPublished {
+                                    pk,
+                                    url: non_empty_string(url),
+                                    exit_code,
+                                })
+                            }
+                            _ => None,
+                        },
+                    })
+                })
                 .optional()
                 .oof_lazy::<Error, _>(|| {
                     aux!(sql ~ sql,
                          params ~ logging::dbg((pk,)))
-                })?
-                .map(|(name, exit_code, output, fragment, published)| Build {
-                    pk,
-                    name,
-                    exit_code,
-                    output,
-                    items: vec![],
-                    fragment: if fragment > 0 {
-                        Some(BuildFragment { size: fragment })
-                    } else {
-                        None
-                    },
-                    published,
-                });
+                })?;
 
             let Some(mut build) = build else {
                 return Ok(None);
             };
 
-            /* TODO we can use rowid instead of having a sort column right? */
             let sql = r#"SELECT w.pk, w.workshopid
-                           FROM "build-item"    b
-                           JOIN "workshop-item" w ON w.pk = b.item
-                          WHERE b.build=?1
-                       ORDER BY b.sort ASC"#;
+                           FROM "mod-list-item" m
+                           JOIN "workshop-item" w ON w.pk = m.item
+                          WHERE m.list=?1
+                       ORDER BY m.sort ASC"#;
             build.items = tx
                 .prepare_cached(sql)
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
@@ -2840,25 +2862,53 @@ pub(crate) mod db {
             Ok(Some(build))
         }
 
-        // pub fn build_exists(&mut self, pk: i64) -> Result<bool> {
-        //     let sql = r#"SELECT 1
-        //                    FROM "build"
-        //                   WHERE pk = ?1"#;
-        //     Ok(self
-        //         .transaction()?
-        //         .prepare_cached(sql)
-        //         .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
-        //         .query_row(params![pk], |_| Ok(()))
-        //         .optional()
-        //         .oof_lazy::<Error, _>(|| {
-        //             aux!(sql ~ sql,
-        //                  params ~ logging::dbg((pk,)))
-        //         })?
-        //         .is_some())
-        // }
+        pub fn list_builds(&mut self) -> Result<Vec<BuildSummary>> {
+            let tx = self.transaction()?;
 
-        pub fn save_build(&mut self, build: SaveBuild) -> Result<SaveBuildResult> {
-            let SaveBuild { name, items } = build;
+            let sql = r#"SELECT b.pk, b.exit_code,
+                                (SELECT COUNT(*)
+                                   FROM "mod-list-item" mi
+                                  WHERE mi.list = b.pk),
+                                pi.publish, pi.url, p.exit_code
+                           FROM "build" b
+                      LEFT JOIN "publish-item" pi
+                             ON pi.rowid = (SELECT rowid
+                                              FROM "publish-item"
+                                             WHERE build = b.pk
+                                          ORDER BY publish DESC
+                                             LIMIT 1)
+                      LEFT JOIN "publish" p 
+                             ON p.pk = pi.publish
+                       ORDER BY b.pk DESC"#;
+            Ok(tx
+                .prepare_cached(sql)
+                .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
+                .query_map([], |row| {
+                    Ok(BuildSummary {
+                        pk: row.get(0)?,
+                        exit_code: row.get(1)?,
+                        item_count: row.get(2)?,
+                        published: match (row.get(3)?, row.get(4)?, row.get(5)?) {
+                            (Some(pk), Some(url), Some(exit_code)) => {
+                                Some(BuildPublished {
+                                    pk,
+                                    url: non_empty_string(url),
+                                    exit_code,
+                                })
+                            }
+                            _ => None,
+                        },
+                    })
+                })
+                .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+                .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?)
+        }
+
+        pub fn save_mod_list(
+            &mut self,
+            mod_list: SaveModList,
+        ) -> Result<SaveModListResult> {
+            let SaveModList { items } = mod_list;
 
             let mut tx = self.transaction_immediate()?;
 
@@ -2891,26 +2941,23 @@ pub(crate) mod db {
             };
 
             if missing.len() > 0 {
-                return Ok(SaveBuildResult::Missing { missing });
+                return Ok(SaveModListResult::Missing { missing });
             }
 
             let pk = tx.create_timestamp()?;
 
-            let sql = r#"INSERT INTO "build"
-                                     (pk, name)
-                              VALUES (?1, ?2)"#;
+            let sql = r#"INSERT INTO "mod-list"
+                                     (pk)
+                              VALUES (?1)"#;
             let n = tx
                 .prepare_cached(sql)
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
-                .execute(params![pk, name])
-                .oof_lazy::<Error, _>(|| {
-                    aux!(sql ~ sql,
-                         params ~ logging::dbg((pk, name)))
-                })
+                .execute([pk])
+                .oof_lazy::<Error, _>(|| aux!(sql ~ sql, params ~ logging::dbg((pk,))))
                 .map(|n| debug_assert!(n == 1))?;
 
-            let sql = r#"INSERT INTO "build-item"
-                                     (build, item, sort)
+            let sql = r#"INSERT INTO "mod-list-item"
+                                     (list, item, sort)
                               VALUES (?1, ?2, ?3)"#;
             let mut stmt = tx
                 .prepare_cached(sql)
@@ -2928,7 +2975,25 @@ pub(crate) mod db {
 
             tx.commit()?;
 
-            Ok(SaveBuildResult::Inserted { pk })
+            Ok(SaveModListResult::Inserted { pk })
+        }
+
+        pub fn new_build(&mut self, pk: i64) -> Result<()> {
+            let tx = self.transaction_immediate()?;
+
+            let sql = r#"INSERT INTO "build" (pk)
+                              VALUES (?1)"#;
+
+            tx.prepare_cached(sql)
+                .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
+                .execute([pk])
+                .oof_lazy::<Error, _>(|| {
+                    aux!(sql ~ sql,
+                         params ~ logging::dbg((pk,)))
+                })
+                .map(|n| debug_assert!(n == 1))?;
+
+            Ok(tx.commit()?)
         }
 
         pub fn save_build_result(&mut self, b: BuildResult) -> Result<()> {
@@ -3008,42 +3073,55 @@ pub(crate) mod db {
             Ok(NewPublish { pk, fragments })
         }
 
-        pub fn save_publish_result(&mut self, p: PublishResult) -> Result<()> {
+        pub fn save_publish_result(&mut self, p: SavePublishResult) -> Result<()> {
             let tx = self.transaction_immediate()?;
 
             let sql = r#"UPDATE "publish"
                             SET output=?2,
-                                exit_code=?3,
-                                public_url=?4
+                                exit_code=?3
                           WHERE pk=?1
                       RETURNING pk"#;
             tx.prepare_cached(sql)
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
-                .query_one(params![p.pk, p.output, p.exit_code, p.public_url], getscols![])
+                .query_one(params![p.pk, p.output, p.exit_code], getscols![])
                 .oof_lazy::<Error, _>(|| {
                     aux!(sql ~ sql,
-                         params ~ logging::dbg((p.pk, "...", p.exit_code, p.public_url)))
+                         params ~ logging::dbg((p.pk, "...", p.exit_code)))
+                })?;
+
+            let sql = r#"UPDATE "publish-item"
+                            SET url=?2 || build
+                          WHERE publish=?1"#;
+            tx.prepare_cached(sql)
+                .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
+                .execute(params![p.pk, p.public_url])
+                .oof_lazy::<Error, _>(|| {
+                    aux!(sql ~ sql,
+                         params ~ logging::dbg((p.pk, p.public_url)))
                 })?;
 
             Ok(tx.commit()?)
         }
 
-        pub fn get_publish(&mut self, pk: i64) -> Result<Option<Publish>> {
-            let sql = r#"SELECT exit_code, public_url
-                           FROM "publish"
-                          WHERE pk = ?1"#;
-            Ok(self
-                .transaction()?
-                .prepare_cached(sql)
-                .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
-                .query_row(params![pk], getscols![_, _])
-                .optional()
-                .oof_lazy::<Error, _>(|| {
-                    aux!(sql ~ sql,
-                         params ~ logging::dbg((pk,)))
-                })?
-                .map(|(exit_code, public_url)| Publish { pk, exit_code, public_url }))
-        }
+        // pub fn get_build_publish(&mut self, pk: i64) -> Result<Option<BuildPublished>> {
+        //     /* this is buggy and confusing in terms of how to handle
+        //      * a build that doesn't exist vs a build not published */
+        //     // let sql = r#"SELECT pi.publish, pi.url, p.exit_code
+        //     //                FROM "publish-item" pi
+        //     //                FROM "publish"      p ON p.pk = pi.publish
+        //     //               WHERE pi.build = ?1"#;
+        //     Ok(self
+        //         .transaction()?
+        //         .prepare_cached(sql)
+        //         .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
+        //         .query_row(params![pk], getscols![_, _, _])
+        //         .optional()
+        //         .oof_lazy::<Error, _>(|| {
+        //             aux!(sql ~ sql,
+        //                  params ~ logging::dbg((pk,)))
+        //         })?
+        //         .map(|(pk, url, exit_code)| BuildPublished { pk, url, exit_code }))
+        // }
     }
 
     struct Tx<'l> {
@@ -3201,12 +3279,11 @@ pub(crate) mod db {
     #[derive(Debug, Clone, serde::Serialize)]
     pub struct Build {
         pub pk: i64,
-        pub name: String,
         pub items: Vec<BuildItem>,
         pub exit_code: Option<i64>,
         pub output: Option<String>,
         pub fragment: Option<BuildFragment>,
-        pub published: Option<i64>,
+        pub published: Option<BuildPublished>,
     }
 
     #[derive(Debug, Clone, serde::Serialize)]
@@ -3220,15 +3297,28 @@ pub(crate) mod db {
         pub workshopid: WorkshopId,
     }
 
+    #[derive(Debug, Clone, serde::Serialize)]
+    pub struct BuildSummary {
+        pub pk: i64,
+        pub item_count: i64,
+        pub exit_code: Option<i64>,
+        pub published: Option<BuildPublished>,
+    }
+
+    #[derive(Debug, Clone, serde::Serialize)]
+    pub struct BuildPublished {
+        pub pk: i64,
+        pub url: Option<String>,
+        pub exit_code: Option<i64>,
+    }
+
     #[derive(Debug, Clone, serde::Deserialize)]
-    pub struct SaveBuild {
-        // pub pk: Option<i64>,
-        pub name: String,
+    pub struct SaveModList {
         pub items: Vec<i64>,
     }
 
     #[derive(Debug, Clone)]
-    pub enum SaveBuildResult {
+    pub enum SaveModListResult {
         Inserted { pk: i64 },
         Missing { missing: Vec<i64> },
     }
@@ -3242,7 +3332,7 @@ pub(crate) mod db {
     }
 
     #[derive(Debug, Clone)]
-    pub struct BuildItemFiles {
+    pub struct Files {
         pub files: Vec<(i64, Box<[u8]>)>,
     }
 
@@ -3257,7 +3347,7 @@ pub(crate) mod db {
     }
 
     #[derive(Debug)]
-    pub struct PublishResult {
+    pub struct SavePublishResult {
         pub pk: i64,
         pub public_url: String,
         pub exit_code: i64,
@@ -3265,9 +3355,9 @@ pub(crate) mod db {
     }
 
     #[derive(Debug, Clone, serde::Serialize)]
-    pub struct Publish {
+    pub struct PublishItem {
         pub pk: i64,
-        pub public_url: String,
+        pub url: String,
         pub exit_code: Option<i64>,
     }
 
@@ -3301,6 +3391,10 @@ pub(crate) mod db {
                 .map(Json)
                 .map_err(rusqlite::types::FromSqlError::other)
         }
+    }
+
+    fn non_empty_string(s: String) -> Option<String> {
+        Some(s).filter(|s| !s.is_empty())
     }
 }
 

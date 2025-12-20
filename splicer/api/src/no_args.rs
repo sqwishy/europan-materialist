@@ -1,7 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{format_err, Context};
+use anyhow::{Context, format_err};
 
 use crate::ansi;
 

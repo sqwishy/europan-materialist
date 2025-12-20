@@ -8,7 +8,7 @@ name = "europan-materialist"
 path = "src/main.rs"
 
 [dependencies]
-kanal = { version = "0.1.1", path = "vendor/kanal" } # container build no fetch
+# kanal = { version = "0.1.1", path = "vendor/kanal" } # container build no fetch
 autodaemon = { version = "0.1.0", path = "../autodaemon" } # container build no fetch
 stupid-rate-limit = { version = "0.1.0", path = "../stupid-rate-limit" } # container build no fetch
 api-config = { version = "0.1.0", path = "../api-config" } # container build no fetch
@@ -28,4 +28,4 @@ bytes = { version = "1.10.1", default-features = false }
 dom_query = { version = "0.23.1", default-features = false }
 base64 = { version = "0.22.1", default-features = false }
 zstd = { version = "0.13.3", default-features = false }
-futures-concurrency = "7.6.3"
+kanal = { git = "https://github.com/fereidani/kanal.git", version = "0.2.0-beta1" }
