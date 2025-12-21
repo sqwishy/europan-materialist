@@ -9,13 +9,14 @@ import * as F from "./F";
 export type ResponseDetails = { code: number, status: string, body: string }
 
 
-export const API = import.meta.env.VITE_API_URL || "http://10.0.69.3:8848"
+export const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8847"
 
 
 export type Resource<T> = {
 	// Object.defineProperties makes typescript shit itself?
 	// (): () => T | null,
 	loaded: () => T | null,
+	unwrap: () => T | undefined,
 	hasLoaded: () => boolean,
 	isLoading: () => boolean,
 	last: () => T | null,
@@ -27,6 +28,7 @@ export type Resource<T> = {
 export const wrapResource =
 	<T,>([r, { mutate, refetch }]: ResourceReturn<T>): Resource<T> =>
 	({
+		/* should this have createMemo? */
 		loaded: () => loadedResource(r),
 		hasLoaded: () => Boolean(r.loading),
 		isLoading: () => r.loading,
@@ -35,6 +37,7 @@ export const wrapResource =
 		hasError: () => Boolean(r.error),
 		mutate,
 		refetch,
+		unwrap: r,
 	})
 
 
@@ -51,9 +54,9 @@ export type Remotes = {
 	getWorkshopItemVersions: (_: string, o?: RemoteOpts) => Resource<WorkshopItemList>,
 	refreshWorkshopItem: (_: string, o?: RemoteOpts) => Resource<WorkshopItem | WorkshopCollection>,
 	downloadVersion: (_: number, o?: RemoteOpts) => Resource<WorkshopItem>,
-	getBuild: (_: number | string, o?: RemoteOpts) => Resource<BuildResult>,
-	waitOnPublish: (_: number, o?: RemoteOpts) => Resource<PublishResult>,
-	// submitBuild: (_: SubmitBuild, o?: RemoteOpts) => Resource<BuildResult>,
+	getBuild: (_: number | string, o?: RemoteOpts) => Resource<Build>,
+	// waitOnPublish: (_: number, o?: RemoteOpts) => Resource<PublishResult>,
+	// submitBuild: (_: SubmitBuild, o?: RemoteOpts) => Resource<Build>,
 }
 
 
@@ -66,9 +69,7 @@ export const createRemote =
 			resource: (i: P, o?: RemoteOpts) => {
 					let v
 					if ((v = self._map.get(i)) == undefined) {
-						/* FIXME mixing lazy and not lazy with the same key will to be wacky */
 						if (o?.lazy)
-							// v = wrapResource(createResource(F.ignoresFirstCall(() => i), f))
 							v = wrapResource(createResource(i, F.ignoresFirstCall(f) as (_: P) => Promise<R>))
 						else
 							v = wrapResource(createResource(i, f))
@@ -85,7 +86,7 @@ export const createRemotes = (): Remotes => ({
 	refreshWorkshopItem: createRemote(requestRefreshItem).resource,
 	downloadVersion: createRemote(requestDownloadVersion).resource,
 	getBuild: createRemote(requestGetBuild).resource,
-	waitOnPublish: createRemote(requestWaitOnPublish).resource,
+	// waitOnPublish: createRemote(requestWaitOnPublish).resource,
 	// submitBuild: createRemote(requestSubmitBuild).resource,
 })
 
@@ -124,10 +125,8 @@ export const latestResource = <T,>(r: ResourceReturn<T>[0]): T | null => {
 }
 
 
-/* POST /workshop-item/:pk/ */
+/* GET /workshop-item/?workshopid= */
 export const requestGetWorkshopItemList = async (workshopid: string): Promise<WorkshopItemList> => {
-	// await F.zzz(1123 + 234 * Math.random())
-
 	const params = new URLSearchParams();
 	params.append("workshopid", workshopid);
 
@@ -142,6 +141,7 @@ export const requestGetWorkshopItemList = async (workshopid: string): Promise<Wo
 
 /* POST /workshop-item/:pk/download/ */
 export const requestDownloadVersion = async (pk: number): Promise<WorkshopItem> => {
+	// await F.zzzMs(456)
 	const res = await fetch(`${API}/workshop-item/${pk}/download/`,
 	                        { method: "POST" })
 	if (!res.ok)
@@ -173,45 +173,65 @@ export const requestRefreshItem = async (
 
 	else
 		return WorkshopItem.parse(obj)
+}
 
-	// if (res.redirected)
-	// 	return WorkshopItem.parse(await res.json())
 
-	// else
-	// 	return WorkshopCollection.parse(await res.json())
+/* POST /mod-list/ */
+export const requestSaveModList = async (m: SaveModList): Promise<ModList> => {
+	// await F.zzzMs(468)
+	const res = await fetch(`${API}/mod-list/`,
+	                        { method: 'POST', body: JSON.stringify(m) })
+
+	if (!res.ok)
+		throw await errForResponse(res)
+
+	return ModList.parse(await res.json())
+}
+
+
+/* GET /mod-list/:pk/ */
+export const requestGetModList = async (pk: number | string): Promise<ModList> => {
+	// await F.zzzMs(468)
+	const res = await fetch(`${API}/mod-list/${pk}/`)
+
+	if (!res.ok)
+		throw await errForResponse(res)
+
+	return ModList.parse(await res.json())
+}
+
+
+/* GET /build/ */
+export const requestGetBuildList = async (): Promise<BuildSummaryList> => {
+	const res = await fetch(`${API}/build/`)
+
+	if (!res.ok)
+		throw await errForResponse(res)
+
+	return BuildSummaryList.parse(await res.json())
 }
 
 
 /* GET /build/:pk/ */
-export const requestGetBuild = async (pk: number | string): Promise<BuildResult> => {
+export const requestGetBuild = async (pk: number | string): Promise<Build> => {
 	const res = await fetch(`${API}/build/${pk}/`)
 
 	if (!res.ok)
 		throw await errForResponse(res)
 
-	return BuildResult.parse(await res.json())
+	return Build.parse(await res.json())
 }
 
 
 /* POST /build/ */
-export const requestSubmitBuild = async (build: SubmitBuild): Promise<BuildResult> => {
+export const requestSubmitBuild = async (build: NewBuild): Promise<Build> => {
 	const res = await fetch(`${API}/build/`,
 	                        { method: 'POST', body: JSON.stringify(build) })
 
 	if (!res.ok)
 		throw await errForResponse(res)
 
-	return BuildResult.parse(await res.json())
-}
-
-
-export const requestWaitOnPublish = async (pk: number): Promise<PublishResult> => {
-	const res = await fetch(`${API}/publish/${pk}/wait/`)
-
-	if (!res.ok)
-		throw await errForResponse(res)
-
-	return PublishResult.parse(await res.json())
+	return Build.parse(await res.json())
 }
 
 
@@ -260,35 +280,62 @@ export type WorkshopItemList = z.infer<typeof WorkshopItemList>
 export type WorkshopCollection = z.infer<typeof WorkshopCollection>
 
 
-export const BuildItem = z.object({
+export const BuildPublished = z.object({
+	pk: z.number(),
+	url: z.string(),
+	exit_code: z.number(),
+})
+
+export type BuildPublished = z.infer<typeof BuildPublished>
+
+
+export const NewBuild = z.object({
+	modlist: z.number(),
+})
+
+export const Build = z.object({
+  pk: z.number(),
+	exit_code: z.nullish(z.number()),
+	output: z.nullish(z.string()),
+  fragment: z.nullish(z.object({ size: z.number() })),
+})
+
+/* a shorter Build? */
+export const BuildSummary = z.object({
+  pk: z.number(),
+	exit_code: z.nullish(z.number()),
+	item_count: z.number(),
+	published: z.nullish(BuildPublished),
+})
+
+export const BuildSummaryList = z.array(BuildSummary)
+
+export type NewBuild = z.infer<typeof NewBuild>
+export type Build = z.infer<typeof Build>
+export type BuildSummary = z.infer<typeof BuildSummary>
+export type BuildSummaryList = z.infer<typeof BuildSummaryList>
+
+
+	// items: z.array(ModListItem),
+	// published: z.nullish(BuildPublished),
+
+export const SaveModList = z.object({
+	items: z.array(z.number()),
+})
+
+export const ModListItem = z.object({
 	pk: z.number(),
 	workshopid: z.string(),
 })
 
-
-export const SubmitBuild = z.object({
-	name: z.string(),
-	items: z.array(z.number()),
-})
-
-
-export const BuildResult = z.object({
+export const ModList = z.object({
   pk: z.number(),
-	name: z.string(),
-	exit_code: z.nullish(z.number()),
-	output: z.nullish(z.string()),
-	items: z.array(BuildItem),
-  fragment: z.nullish(z.object({ size: z.number() })),
-	published: z.nullish(z.number()),
+	items: z.array(ModListItem),
+	build: z.nullish(Build),
+	published: z.nullish(BuildPublished),
 })
 
-export type BuildItem = z.infer<typeof BuildItem>
-export type SubmitBuild = z.infer<typeof SubmitBuild>
-export type BuildResult = z.infer<typeof BuildResult>
 
-export const PublishResult = z.object({
-	exit_code: z.number(),
-	public_url: z.string(),
-})
-
-export type PublishResult = z.infer<typeof PublishResult>
+export type SaveModList = z.infer<typeof SaveModList>
+export type ModList = z.infer<typeof ModList>
+export type ModListItem = z.infer<typeof ModListItem>

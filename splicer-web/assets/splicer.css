@@ -28,9 +28,7 @@ section > div.is-selected
 section > div.is-selected > .item
   { border-color: var(--mod) }
 
-button:disabled,
-button.square:disabled
-  { color: var(--muted) }
+/* duplicated */
 
 input:read-write:hover,
 button:enabled:hover,

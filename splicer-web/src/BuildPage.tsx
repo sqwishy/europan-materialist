@@ -1,9 +1,13 @@
-import { Switch, Match, batch, createSignal, createResource, createMemo, createEffect } from "solid-js";
-import { For, Index, Show } from "solid-js/web";
+import { Switch, Match, batch, createSignal, createReaction, createResource, createMemo, createEffect } from "solid-js";
+import { untrack, getOwner, runWithOwner } from "solid-js";
+import { ResourceFetcher, Resource } from "solid-js";
+import { For, Show } from "solid-js/web";
 import { createStore, SetStoreFunction } from "solid-js/store"
-import { useParams, useLocation, useNavigate } from "@solidjs/router";
+import { A, useParams, useLocation, useNavigate } from "@solidjs/router";
 
 import { z } from "zod"
+
+import * as Remote from "./Remote";
 
 import { createRemotes, wrapResource } from "./Remote";
 import { workshopUrl, requestSubmitBuild, requestPing } from "./Remote";
@@ -13,11 +17,78 @@ import * as Misc from "./Misc";
 import { Toggle } from "./Input"
 
 
+const createRemote = <T, R = unknown>(v: ResourceFetcher<true, T, unknown>) => wrapResource(createResource(v))
+const createLazyRemote = <T, R = unknown>(v: ResourceFetcher<true, T, unknown>) => createRemote(F.ignoresFirstCall(v))
+
+export type AsyncResource<T> = {
+	loaded: () => T | null,
+	isLoading: () => boolean,
+	last: () => T | null,
+	error: () => any,
+	hasError: () => boolean,
+	insert: (_: T) => T,
+	fetch: <F extends T,>(_: Promise<F>) => Promise<F>,
+	// promise: () => Promise<T>,
+}
+
+type CreateAsyncOptions<T> = { tracks?: () => boolean }
+
+/* another failed attempt at wrangling createResource in a way to produce readable code.
+ * instead i am left with more garbage upon garbage. SolidJS fucking sucks with async. */
+const createAsync =
+	<T,>(pinit: Promise<T>, o?: CreateAsyncOptions<T>): AsyncResource<T> =>
+	{
+
+		let generation = 0;
+
+		const wrap =
+			<P,>(p: Promise<P>): Promise<P> => {
+				const us = ++generation
+				return p.then(ok => {
+					if (us != generation) throw new Error("cancelled")
+					else return ok
+				})
+			}
+
+		const [get, set] = createSignal<Promise<T>>(wrap(pinit))
+		/* this messes up my syntax highlighting lmao fuck computers */
+		// const set =
+		// 	<P extends T,>(p: Promise<P>): Promise<P> =>
+		// 	set_(wrap(p))
+		const [r] = createResource(get, p => p)
+
+		const tracks = o?.tracks
+		if (tracks)
+			/* FIXME this calls once in the beginning for no good reason,
+			 * maybe use createReaction if you can get that to re-run reliably */
+			createEffect(() => {
+				if (tracks())
+					/* I don't 100% know if re-using this promise will work out how I want,
+				  * good luck to me I guess lmao */
+					set(wrap(pinit))
+			})
+
+		return {
+			loaded: () => Remote.loadedResource(r),
+			isLoading: () => r.loading,
+			// last: createMemo(() => Remote.latestResource(r), { equals: Object.is }),
+			last: () => Remote.latestResource(r),
+			error: () => r.error,
+			hasError: () => Boolean(r.error),
+			insert: (t: T) => (set(wrap(new Promise<T>(ok => ok(t)))), t),
+			fetch: (p) => set(wrap(p)),
+		}
+	}
+
+const createAsyncLazy =
+	<T,>(o?: CreateAsyncOptions<T | null>): AsyncResource<T | null> =>
+	createAsync<T | null>(new Promise<null>(ok => ok(null)), o)
+
+	
 type Model =
 	{ pk: number | null,
-		name: string,
-		items: ItemWizard.Params[],
-		showOutput: boolean }
+	  items: ItemWizard.Params[],
+	  showOutput: boolean }
 
 
 const isSelected = ({ isSelected }: { isSelected: boolean }) => isSelected
@@ -27,12 +98,10 @@ export const BuildPage = () => {
 	const params = useParams()
 	const location = useLocation()
 	const navigate = useNavigate()
-
 	const remotes = createRemotes()
 
 	const [model, setModel] = createStore<Model>({
 		pk: null,
-		name: "",
 		items: [],
 		showOutput: false,
 	})
@@ -40,82 +109,118 @@ export const BuildPage = () => {
 	const ping = wrapResource(createResource(requestPing));
 
 	createEffect(() => {
+		const owner = getOwner()
 		if (!ping.isLoading())
-			setTimeout(ping.refetch, 30000)
+			if (ping.hasError())
+				setTimeout(() => runWithOwner(owner, () => ping.refetch), 9_000)
+			else
+				setTimeout(() => runWithOwner(owner, () => ping.refetch), 90_000)
 	})
 
 	///
 
-	const getBuild =
-		createMemo(() => params.pk ? remotes.getBuild(params.pk) : null)
+	/* the "ModList" embeds the complete build and published state */
+	const modList = createAsyncLazy<Remote.ModList>()
+	const build = () => modList.last()?.build
+	const published = () => modList.last()?.published
 
-	createEffect(() => {
-		const build = getBuild()?.loaded()
-		if (!build)
-			return;
-		if (model.pk == build.pk)
-			return;
-		setModel("name", build.name)
-		setModel(
-			"items",
-			build.items
-			     .map(({ workshopid, pk }) =>
-			          ({ ...ItemWizard.init(workshopid), version: pk })))
-	})
+	const selectedWorkshopVersions =
+		() => model.items.map(i => i.version ? i.version : []).flat()
 
-	createEffect(() => {
-		let buildResource;
-		let build;
-		if (   (buildResource = getBuild())
-		    && (build = buildResource.loaded())
-		    && !(build.published)
-		    && (build.exit_code == 0))
-			setTimeout(buildResource.refetch, 5000)
-	})
-
-	///
-
-	const versionsToSubmit =
-		createMemo(() => model.items.map(i => i.version ? i.version : []).flat())
-
-	const versionsToDownload =
-		() => versionsToSubmit().map(v => remotes.downloadVersion(v).refetch())
-
+	const saving = createAsyncLazy<Remote.ModList>({ tracks: () => (params.pk, true) })
 	/* step 1 */
-	const downloadAll =
-		wrapResource(createResource(
-			F.ignoresFirstCall(() => Promise.all(versionsToDownload()))))
-
+	const downloadingAll = createAsyncLazy({ tracks: () => submitting.isLoading() })
 	/* step 2 */
-	const submitBuild =
-		wrapResource(createResource(
-			F.ignoresFirstCall(() => requestSubmitBuild({ name: model.name, items: versionsToSubmit() }))))
-
+	const building = createAsyncLazy<Remote.Build>({ tracks: () => submitting.isLoading() })
 	/* step 3 */
-	const waitOnPublish =
-		createMemo(() => {
-				// console.log("waitOnPublish")
-				let p;
-				if (   (p = submitBuild.loaded()?.published)
-				    || (p = getBuild()?.loaded()?.published))
-					 return remotes.waitOnPublish(p)
-		})
+	const publishing = createAsyncLazy<Remote.ModList>({ tracks: () => (model.pk, true) })
+	/* save-download-build in sequence */
+	const submitting = createAsyncLazy();
 
-	/* steps in sequence */
-	const doSubmit =
-		wrapResource(createResource(
-			F.ignoresFirstCall(async () => {
-				submitBuild.mutate()
-				navigate(`/b/`, { scroll: false })
-				await downloadAll.refetch()
-				await submitBuild.refetch()
-				await waitOnPublish()?.refetch()
-			})))
-
+	const isSavingOrSubmitting =
+		() => saving.isLoading() || submitting.isLoading()
+	
+	/* fetch mod list on navigation if our model is stale */
 	createEffect(() => {
 		let pk;
-		if (pk = submitBuild.loaded()?.pk)
-			navigate(`/b/${pk}/`, { scroll: false })
+		if (   (pk = Number(params.pk))
+		    && (untrack(() => model.pk) != pk)) {
+			modList.fetch(Remote.requestGetModList(pk))
+		}
+	})
+
+	/* after modList is fetched, re-init items state when it matches our path */
+	createEffect(() => {
+		let pk;
+		let list;
+		/* when we have a path param */
+		if (   (pk = Number(params.pk))
+		/* and it differs from our model */
+		    && (model.pk != pk)
+		/* and having fetched a mod list */
+		    && (list = modList.loaded())
+		/* and which matches our path param  */
+		    && (pk == list.pk)) {
+			/* then update the model pk and overwrite item state */
+			let { pk, items } = list;
+			batch(() => {
+				setModel("pk", pk)
+				setModel("items", items.map(({ workshopid, pk }) =>
+				                            ({ ...ItemWizard.init(workshopid), version: pk })))
+			})
+		}
+	})
+
+	///
+
+	const save =
+		() =>
+		saving.fetch(Remote.requestSaveModList({ items: selectedWorkshopVersions() }))
+
+	/* after saving, update the our URL */
+	createEffect(() => {
+		const list = saving.loaded()
+		if (list)
+			batch(() => {
+				modList.insert(list)
+				setModel("pk", list.pk)
+				navigate(`/b/${list.pk}`, { scroll: false })
+			})
+	})
+
+	const submit =
+		() =>
+		submitting.fetch(save().then(l => {
+			downloadAll(l).then(() => {
+				submitBuild(l)
+			})
+		}))
+
+	const downloadAll =
+		({ items }: Remote.ModList) => 
+		downloadingAll.fetch(Promise.all(items.map(({ pk }) => Remote.requestDownloadVersion(pk))))
+
+	const submitBuild =
+		({ pk }: Remote.ModList) => 
+		building.fetch(Remote.requestSubmitBuild({ modlist: pk }))
+
+	createEffect(() => {
+		const b = building.loaded()
+		if (b?.pk)
+			modList.fetch(Remote.requestGetModList(b.pk))
+	})
+
+	createEffect(() => {
+		const l = modList.loaded()
+		if (   l?.pk
+		    && l.build
+		    && !l.published
+		    && !publishing.isLoading())
+			publishing.fetch(F.zzzMs(6_000)
+			                  .then(() => Remote.requestGetModList(l.pk)))
+			/* this should just be a separate createEffect maybe i guess idk lmao */
+			          .then(l => modList.insert(l))
+			          .catch(() => null)
 	})
 
 	///
@@ -138,7 +243,7 @@ export const BuildPage = () => {
 		createResource(F.ignoresFirstCall(() => navigator.clipboard.writeText(modUrlsForClipboard())))
 
 	const [_1, { refetch: copyOutputToClipboard }] =
-		createResource(F.ignoresFirstCall(() => navigator.clipboard.writeText(getBuild()?.loaded()?.output || "")))
+		createResource(F.ignoresFirstCall(() => navigator.clipboard.writeText(modList.loaded()?.build?.output || "")))
 
 	///
 
@@ -202,10 +307,10 @@ export const BuildPage = () => {
 			<header>
 				<p>
 					<span class="smol muted breadcrumb">
-						<span><a href="/">root</a></span>
+						<span><A href="/">directory</A></span>
 						<span class="tt">/</span>
 						<Switch>
-							<Match when={!getBuild()}>
+							<Match when={!params.pk}>
 								<span>new load order</span>
 							</Match>
 							<Match when={params.pk}>
@@ -237,27 +342,30 @@ export const BuildPage = () => {
 			<main>
 				<div><hr/></div>
 
-				<div>
-					<form onsubmit={itemsForm(v => setModel("items", F.appends(...v)))}>
-						<input
-							type="text"
-							class="workshopid"
-							title="workshop item id or URL"
-							placeholder="workshop item or URL..."
-							accessKey="k"
-						/>
-						<button type="submit">add</button>
-					</form>
-				</div>
-
-				<Show when={!getBuild()?.last() && getBuild()?.isLoading()}>
-					<div>
-						<div class="item loading">
-							<span class="decoration"></span>
-							<span class="what">loading...</span>
+				<Switch>
+					<Match when={modList.isLoading()}>
+						<div>
+							<div class="item loading">
+								<span class="decoration"></span>
+								<span class="comfy caps">loading...</span>
+							</div>
 						</div>
-					</div>
-				</Show>
+					</Match>
+					<Match when={true}>
+						<div>
+							<form onsubmit={itemsForm(v => setModel("items", F.appends(...v)))}>
+								<input
+									type="text"
+									class="workshopid"
+									title="workshop item id or URL"
+									placeholder="workshop item or URL..."
+									accessKey="k"
+								/>
+								<button type="submit">add</button>
+							</form>
+						</div>
+					</Match>
+				</Switch>
 
 				<section>
 					<For each={model.items}>
@@ -286,7 +394,7 @@ export const BuildPage = () => {
 							📋 copy to clipboard
 						</button>
 						<button
-							disabled={submitBuild.isLoading()}
+							disabled={isSavingOrSubmitting()}
 							onclick={() => batch(() => {
 								selection().forEach(({ workshopid }) => remotes.refreshWorkshopItem(workshopid).refetch())
 								setModel("items", {}, "isSelected", false)
@@ -294,13 +402,13 @@ export const BuildPage = () => {
 							📥 refresh	
 						</button>
 						<button
-							disabled={submitBuild.isLoading()}
+							disabled={isSavingOrSubmitting()}
 							onclick={() => setModel("items", F.removesAt(...selectedIndexes()))}>
 							❎ remove <b>{selection().length}</b>
 						</button>
 						<Show when={hasUnSelection()}>
 							<Toggle
-								disabled={submitBuild.isLoading()}
+								disabled={isSavingOrSubmitting()}
 								value={isRelocating()}
 								update={setRelocating}
 							>🔀 {isRelocating() ? "reorder to ...?" : "reorder"}</Toggle>
@@ -311,25 +419,23 @@ export const BuildPage = () => {
 					</Show>
 				</div>
 
-				<div><hr/></div>
-
 				<div>
 					<div class="item" classList={{
-						"loading": downloadAll.isLoading(),
-						"success": !!downloadAll.loaded() || !!getBuild()?.last(),
+						"loading": downloadingAll.isLoading(),
+						"success": !!downloadingAll.loaded() || !!build(),
 					}}>
 						<span class="decoration"></span>
-						<span class="comfy"><span class="smol tt">#1</span> - download</span>
+						<span class="comfy"><span class="smol tt">#1</span> - <span class="caps">download</span></span>
 						<span class="tt"></span>
 					</div>
 
 					<div class="item" classList={{
-						"loading": submitBuild.isLoading(),
-						"success": !!submitBuild.loaded() || !!getBuild()?.last(),
+						"loading": building.isLoading(),
+						"success": !!build(),
 					}}>
 						<span class="decoration"></span>
-						<span class="comfy"><span class="smol tt">#2</span> - build</span>
-						<Show when={getBuild()?.last()}>
+						<span class="comfy"><span class="smol tt">#2</span> - <span class="caps">build</span></span>
+						<Show when={build()}>
 							{b =>
 							<>
 								<span class="clicky">
@@ -338,104 +444,112 @@ export const BuildPage = () => {
 										value={model.showOutput}
 										update={v => setModel('showOutput', v)}
 									>
-										🤔
+										logs
 									</Toggle>
 								</span>
 								<span class="smol">
-									<i>code {b().exit_code}; {b().exit_code == 0 ? "ok" : "error"}</i>
+									<Show when={b().exit_code != null}>
+										<Misc.Exit code={b().exit_code!} />
+									</Show>
 								</span>
-								<span class="smol">
-									<Misc.PkTime pk={b().pk} />
-								</span>
+								<span class="smol"><Misc.PkTime pk={b().pk} /></span>
 							</>
 							}
 						</Show>
 					</div>
-					<Show when={model.showOutput && getBuild()?.last()}>
-						{b =>
-							<>
-							<div class="item">
-								<span class="decoration"></span>
-								<span class="comfy">
-									<button
-										class="linkish narrow"
-										onclick={() => copyOutputToClipboard()}>
-										📋 copy to clipboard
-									</button>
-								</span>
-								<Show when={b().fragment}>
-									{f => <span class="smol"><Misc.Kb bytes={f().size} /></span>}
-								</Show>
-							</div>
-							<div class="item">
-								<span class="decoration"></span>
-								<pre>{b().output}</pre>
-							</div>
-							</>
-						}
+					<Show when={model.showOutput && build()}>
+					{b =>
+					<>
+					<div class="item">
+						<span class="decoration"></span>
+						<span class="comfy">
+							<button
+								class="linkish narrow"
+								onclick={() => copyOutputToClipboard()}>
+								📋 copy to clipboard
+							</button>
+						</span>
+						<Show when={b().fragment}>
+							{f => <span class="smol">bundle <Misc.Kb bytes={f().size} /></span>}
+						</Show>
+					</div>
+					<div class="item">
+						<span class="decoration"></span>
+						<pre>{b().output}</pre>
+					</div>
+					</>
+					}
 					</Show>
 
 					<div class="item" classList={{
-						"loading": waitOnPublish()?.isLoading(),
-						"success": !!waitOnPublish()?.loaded()
+						"loading": publishing.isLoading(),
+						"success": !!published(),
 					}}>
 						<span class="decoration"></span>
-						<span class="comfy"><span class="smol tt">#3</span> - upload</span>
-						<Show when={waitOnPublish()?.loaded()}>
+						<span class="comfy"><span class="smol tt">#3</span> - <span class="caps">upload</span></span>
+						<Show when={published()}>
 							{p =>
 								<>
 								<span>
-									<a href={p().public_url + params.pk} target="_blank">view</a>
+									<a href={p().url} target="_blank">view</a>
 								</span>
-								<span class="smol">
-									<i>code {p().exit_code}; {p().exit_code == 0 ? "ok" : "error"}</i>
-								</span>
+								<span class="smol"><Misc.Exit code={p().exit_code} /></span>
+								<span class="smol"><Misc.PkTime pk={p().pk} /></span>
 								</>
 							}
-						</Show>
-						<Show when={getBuild()?.last()?.published}>
-							{pk => <span class="smol"><Misc.PkTime pk={pk()} /></span>}
 						</Show>
 					</div>
 				</div>
 
 				<div>
-					<Show when={downloadAll.error()}>
-						{err => <Misc.ErrorItems title="download error" err={err()} /> }
-					</Show>
-					<Show when={submitBuild.error()}>
-						{err => <Misc.ErrorItems title="build error" err={err()} /> }
-					</Show>
-					<Show when={getBuild()?.error()}>
+					<Show when={modList.error()}>
 						{err => <Misc.ErrorItems title="loading error" err={err()} /> }
 					</Show>
-					<Show when={waitOnPublish()?.error()}>
+					<Show when={downloadingAll.error()}>
+						{err => <Misc.ErrorItems title="download error" err={err()} /> }
+					</Show>
+					<Show when={building.error()}>
+						{err => <Misc.ErrorItems title="build error" err={err()} /> }
+					</Show>
+					<Show when={publishing.error()}>
 						{err => <Misc.ErrorItems title="upload error" err={err()} /> }
 					</Show>
 				</div>
 
 				<div class="ctl">
-					<input
-						type="text"
-						disabled={doSubmit.isLoading()}
-						class="build-name ctl-main-item"
-						title="name"
-						placeholder="name (optional, does nothing right now) ..."
-						accessKey="l"
-					/>
-					<button 
-						disabled={doSubmit.isLoading()}
-						onclick={() => doSubmit.refetch()}
+					<span class="smol muted ctl-main-item">
+						<Show when={modList.last()?.pk /*Number(params.pk)*/}>
+							{pk => 
+								<Show when={!saving.isLoading()} fallback={"saving..."}>
+									<>saved at <Misc.PkTime pk={pk()} /></>
+								</Show>
+							}
+						</Show>
+					</span>
+					<button
+						disabled={isSavingOrSubmitting()}
+						onclick={() => save()}
+					>💾 save</button>
+					<button
+						disabled={isSavingOrSubmitting()}
+						onclick={() => submit()}
 					>🚢 submit</button>
 				</div>
 
-				<Show when={doSubmit.error()}>
+				<Show when={saving.error()}>
 					{err =>
 						<div>
-							<Misc.ErrorItems title="submit error" err={err()} />
+							<Misc.ErrorItems title="save error" err={err()} />
 						</div>
 					}
 				</Show>
+				{/* <Show when={submitting.error()}> */}
+				{/* 	{err => */}
+				{/* 		<div> */}
+				{/* 			<Misc.ErrorItems title="submit error" err={err()} /> */}
+				{/* 		</div> */}
+				{/* 	} */}
+				{/* </Show> */}
 			</main>
 		</>
 	);

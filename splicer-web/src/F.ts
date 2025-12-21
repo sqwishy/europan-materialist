@@ -35,6 +35,10 @@ export const ignoresFirstCall =
 	<R,>(f: (..._: any[]) => R, isFirst = true) =>
 	(...a: any[]) => isFirst ? (isFirst = false, undefined) : f(...a)
 
+export const state =
+	<T,>(i: T) =>
+	(n?: T) => (n === undefined ? i : i = n)
+
 export const clamp =
 	(v: number, lo: number, hi: number) =>
 	Math.min(Math.max(lo, v), hi)
@@ -52,6 +56,12 @@ export const unreachable = (_: never) => {}
 
 export const dbg =
 	<T,>(v: T): T => (console.log(v), v)
+
+export const assert =
+	<T,>(v: T): T => {
+		if (!v) throw Error(`${v}`)
+		else return v;
+	}
 
 export const zzzMs =
 	(n: number) => new Promise(ok => setTimeout(ok, n))

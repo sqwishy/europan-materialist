@@ -31,7 +31,7 @@ export const ErrorItems = (params: { title: string, err: any }) => {
 					}
 				</Match>
 				<Match when={params.err instanceof z.ZodError}>
-					<span class="comfy pre">{z.prettifyError(err() as z.ZodError)}</span>
+					<span class="comfy pre">{z.prettifyError(params.err as z.ZodError)}</span>
 				</Match>
 				<Match when={true}>
 					<span class="comfy">{params.err.toString()}</span>
@@ -40,6 +40,11 @@ export const ErrorItems = (params: { title: string, err: any }) => {
 		</div>
 		</>
 	)
+}
+
+
+export const Exit = (params : { code: number }) => {
+	return <i>{params.code == 0 ? "ok" : "error"} ({params.code})</i>
 }
 
 

@@ -1,4 +1,5 @@
 import { createResource, createSignal, createEffect, createMemo, Switch, Match } from "solid-js";
+import { untrack } from "solid-js";
 import { For, Index, Show } from "solid-js/web";
 import { createStore } from "solid-js/store"
 
@@ -84,7 +85,8 @@ export const View = (params: Params) => {
 	/* default the selected version to the most recent */
 	createEffect(() => {
 		let version = latestVersion()?.pk;
-		if (version && !params.version)
+		/* untrack to void selecting when the user explicitly de-selects... */
+		if (version && !untrack(() => params.version))
 			params.update?.({ version })
 	})
 
