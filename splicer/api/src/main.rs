@@ -2650,7 +2650,6 @@ pub(crate) mod db {
 
             let sql = r#"INSERT INTO "file" (pk, size, etag, data)
                               VALUES (?, ?, ?, ?)
-                              dl
                          ON CONFLICT (etag) WHERE etag IS NOT null
                        DO UPDATE SET pk=pk
                            RETURNING pk"#;
@@ -2868,7 +2867,7 @@ pub(crate) mod db {
                                              WHERE build = l.pk
                                           ORDER BY publish DESC
                                              LIMIT 1)
-                      LEFT JOIN "publish" p 
+                      LEFT JOIN "publish" p
                              ON p.pk = pi.publish
                           WHERE l.pk=?1"#;
             let mod_list: Option<ModList> = tx
@@ -2952,7 +2951,7 @@ pub(crate) mod db {
                       --                        WHERE build = b.pk
                       --                     ORDER BY publish DESC
                       --                        LIMIT 1)
-                      -- LEFT JOIN "publish" p 
+                      -- LEFT JOIN "publish" p
                       --        ON p.pk = pi.publish
                           WHERE b.pk=?1"#;
             Ok(tx
@@ -3001,7 +3000,7 @@ pub(crate) mod db {
                                              WHERE build = b.pk
                                           ORDER BY publish DESC
                                              LIMIT 1)
-                      LEFT JOIN "publish" p 
+                      LEFT JOIN "publish" p
                              ON p.pk = pi.publish
                        ORDER BY b.pk DESC"#;
             Ok(tx
