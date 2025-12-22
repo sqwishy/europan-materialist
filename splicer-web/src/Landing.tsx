@@ -19,7 +19,7 @@ export const Landing = () => {
 		</header>
 		<main>
 			<div><hr/></div>
-			<p><a class="buttonish" href="/b/">new load order</a></p>
+			<p><a class="buttonish highlight-button" href="/b/">new load order</a></p>
 
 			<Show when={list.error()}>
 				{err => <div><Misc.ErrorItems title="list error" err={err()} /></div> }

@@ -11,8 +11,13 @@ input.workshopid
 .item > .clicky
   { min-width: 3ch; justify-content: end }
 
-/* no longer needed? TODO test more */
-/* .ctl button { line-height: 1 } */
+
+.highlight-button
+	{ --input: var(--station-item);
+	  --outline: var(--station-outline);
+	  --shadow: var(--station-outline);
+	  color: var(--station-text) }
+
 
 header > p
 	{ display: flex }
@@ -20,8 +25,7 @@ header > p > .breadcrumb
 	{ flex-grow: 1 }
 header > p > .breadcrumb > *:not(:first-child)
   { margin-left: 4px }
-/* header > p > .connection-status */
-/* 	{ max-width: 12ch } */
+
 
 section > div.is-selected
   { box-shadow: 3px 3px var(--shadow) }
@@ -31,6 +35,7 @@ section > div.is-selected > .item
 /* duplicated */
 
 input:read-write:hover,
+a.buttonish:hover,
 button:enabled:hover,
 button.linkish:enabled:hover,
 button.toggle.square:enabled:hover,
@@ -59,11 +64,6 @@ button.radio.square.is-checked
              padding: 1.5px }
 button.radio.square
   { border-radius: 50% }
-
-
-/* is this in use? */
-button.item
-  { width: 100% }
 
 
 button.linkish.narrow

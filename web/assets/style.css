@@ -115,13 +115,14 @@ input[type=text],
 select,
 details.select-bundle
   {        padding: 4px 9px;
-           display: inline-block;
        font-family: 'Exo 2', sans-serif;
    text-decoration: none;
      margin-bottom: 3px;
   background-color: var(--input);
             border: 1px solid var(--outline);
         box-shadow: 3px 3px var(--shadow) }
+a.buttonish
+  {    display: inline-block }
 
 button
   { cursor: pointer; }
@@ -162,7 +163,7 @@ details.select-bundle > .loadable-bundle a.active
 details.select-bundle
   { padding: 0 }
 details.select-bundle ol.load-order
-  { padding: 6px 9px }
+  { padding: 4px 9px }
 details.select-bundle > summary
   { list-style: none }
 details.select-bundle > summary > *

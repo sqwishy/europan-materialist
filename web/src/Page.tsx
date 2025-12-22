@@ -298,7 +298,7 @@ const LoadOrderDetails = (props: { loadOrder: Game.Package[] }) => {
     <Show when={(props.loadOrder.length || 0) > 1}>
       <details class="select-bundle">
         <summary>
-          <div style="font-size: 130%; padding: 4px 6px; text-align: right">
+          <div style="font-size: 130%; padding: 2px 6px; text-align: right">
             <i style="mask: var(--info) no-repeat 0 0/100% 100%; background: var(--muted)">&emsp;</i>
           </div>
         </summary>
