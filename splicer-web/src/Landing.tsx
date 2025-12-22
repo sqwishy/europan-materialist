@@ -31,19 +31,19 @@ export const Landing = () => {
 					{l =>
 						<For each={l()}> 
 							{build =>
-							<li>
-								<span>{build.item_count}x </span>
+							<li class="item">
+								{/* <span>{build.item_count}x </span> */}
 								<span class="comfy">
 									<A href={`/b/${build.pk}`}>
-										{/* <span class="tt">{build.pk}</span> */}
-										{/* &emsp; */}
-										<span class="smol">
 										 <Misc.PkTime pk={build.pk} />
-										</span>
 									</A>
-									<a href="#">
-										view
-									</a>
+									&emsp;
+									<span class="identifier"><b>{build.item_count}×</b> mods</span>
+								</span>
+								<span>
+									<Show when={build.published}>
+										{p => <a href={p().url}>view</a>}
+									</Show>
 								</span>
 								{/* <span class="smol"> */}
 								{/* 	<i>code {build.exit_code}; {build.exit_code == 0 ? "ok" : "error"}</i> */}

@@ -197,11 +197,11 @@ export const BuildPage = () => {
 		}))
 
 	const downloadAll =
-		({ items }: Remote.ModList) => 
+		({ items }: Remote.ModList) =>
 		downloadingAll.fetch(Promise.all(items.map(({ pk }) => Remote.requestDownloadVersion(pk))))
 
 	const submitBuild =
-		({ pk }: Remote.ModList) => 
+		({ pk }: Remote.ModList) =>
 		building.fetch(Remote.requestSubmitBuild({ modlist: pk }))
 
 	createEffect(() => {
@@ -519,7 +519,7 @@ export const BuildPage = () => {
 				<div class="ctl">
 					<span class="smol muted ctl-main-item">
 						<Show when={modList.last()?.pk /*Number(params.pk)*/}>
-							{pk => 
+							{pk =>
 								<Show when={!saving.isLoading()} fallback={"saving..."}>
 									<>saved at <Misc.PkTime pk={pk()} /></>
 								</Show>

@@ -100,7 +100,7 @@ pub struct HttpReqConfig {
 
 #[derive(Debug, PartialEq)]
 pub struct BuildConfig {
-    pub image: String,
+    pub container: ContainerConfig,
     pub work_inner: String,
     pub work_outer: String,
     pub vanilla: String,
@@ -108,11 +108,17 @@ pub struct BuildConfig {
 
 #[derive(Debug, PartialEq)]
 pub struct PublishConfig {
-    pub image: String,
+    pub container: ContainerConfig,
     pub work_inner: String,
     pub work_outer: String,
     pub secrets_volume: String,
     pub deploy_site: String,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ContainerConfig {
+    pub image: String,
+    pub pod: String,
 }
 
 impl Config {
@@ -347,7 +353,8 @@ impl<'s> Decode<'s> {
 
         for node in doc.nodes() {
             match node.name().value() {
-                "image" => self.expect_string(&mut v.image, node),
+                "image" => self.expect_string(&mut v.container.image, node),
+                "pod" => self.expect_string(&mut v.container.pod, node),
                 "work-inner" => self.expect_string(&mut v.work_inner, node),
                 "work-outer" => self.expect_string(&mut v.work_outer, node),
                 "vanilla" => self.expect_string(&mut v.vanilla, node),
@@ -364,7 +371,8 @@ impl<'s> Decode<'s> {
 
         for node in doc.nodes() {
             match node.name().value() {
-                "image" => self.expect_string(&mut v.image, node),
+                "image" => self.expect_string(&mut v.container.image, node),
+                "pod" => self.expect_string(&mut v.container.pod, node),
                 "work-inner" => self.expect_string(&mut v.work_inner, node),
                 "work-outer" => self.expect_string(&mut v.work_outer, node),
                 "secrets-volume" => self.expect_string(&mut v.secrets_volume, node),
@@ -426,13 +434,19 @@ impl Default for Config {
                 read_timeout: Default::default(),
             },
             build: BuildConfig {
-                image: "splicer-build".to_string(),
+                container: ContainerConfig {
+                    image: "splicer-build".to_string(),
+                    pod: "".to_string(),
+                },
                 work_inner: "/tmp/spl-api-work".to_string(),
                 work_outer: "/tmp/spl-api-work".to_string(),
                 vanilla: "barotrauma".to_string(),
             },
             publish: PublishConfig {
-                image: "splicer-publish".to_string(),
+                container: ContainerConfig {
+                    image: "splicer-publish".to_string(),
+                    pod: "".to_string(),
+                },
                 work_inner: "/tmp/spl-api-work".to_string(),
                 work_outer: "/tmp/spl-api-work".to_string(),
                 secrets_volume: "materialist-secrets".to_string(),

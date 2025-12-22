@@ -843,6 +843,10 @@ pub(crate) mod www {
         format!("/workshop-item/{pk}/")
     }
 
+    fn path_for_mod_list(pk: i64) -> String {
+        format!("/mod-list/{pk}/")
+    }
+
     fn path_for_build(pk: i64) -> String {
         format!("/build/{pk}/")
     }
@@ -874,6 +878,8 @@ pub(crate) mod www {
                     "/workshop-item/{pk}/download/",
                     post(download_workshop_item),
                 )
+                .route("/mod-list/", post(save_mod_list))
+                .route("/mod-list/{pk}/", get(get_mod_list))
                 .route("/build/", get(list_builds))
                 .route("/build/", post(submit_build))
                 .route("/build/{pk}/", get(get_build))
@@ -1077,6 +1083,33 @@ pub(crate) mod www {
         }))
     }
 
+    async fn get_mod_list(
+        Path(pk): Path<i64>,
+        Extension(db): Extension<db::Client>,
+    ) -> Result<Response, Response> {
+        db.get_mod_list(pk)
+            .recv_or_busy()
+            .await?
+            .map_err(internal_error)?
+            .ok_or_else(|| not_found_response())
+            .and_then(json_response)
+    }
+
+    async fn save_mod_list(
+        Extension(db): Extension<db::Client>,
+        body: axum::body::Body,
+    ) -> Result<Response, Response> {
+        let req: db::SaveModList = parse_json_with_limit(body, FOUR_KILOBYTES).await?;
+
+        let pk = db
+            .save_mod_list(req)
+            .recv_or_busy()
+            .await?
+            .map_err(internal_error)?;
+
+        Ok(see_other(path_for_mod_list(pk)))
+    }
+
     async fn get_build(
         Path(pk): Path<i64>,
         Extension(db): Extension<db::Client>,
@@ -1099,6 +1132,11 @@ pub(crate) mod www {
             .and_then(json_response)
     }
 
+    #[derive(Debug, serde::Deserialize)]
+    struct SubmitBuild {
+        modlist: i64,
+    }
+
     /* todo avoid duplicate builds? */
     async fn submit_build(
         // rate: RateLimited,
@@ -1116,22 +1154,24 @@ pub(crate) mod www {
         use std::fs;
         use std::iter::once;
 
-        let req: db::SaveModList = parse_json_with_limit(body, FOUR_KILOBYTES).await?;
+        let req: SubmitBuild = parse_json_with_limit(body, FOUR_KILOBYTES).await?;
 
         // rate.limit(COST_BUILD).await.map_err(rate_limited)?;
 
         butt!("submit build"; "req" => logging::dbg(&req));
 
+        let SubmitBuild { modlist: pk } = req;
+
         bg.spawn(async move {
             let res = db
-                .save_mod_list(req)
+                .insert_build_and_return_files(pk)
                 .recv_or_busy()
                 .await?
                 .map_err(internal_error)?;
 
-            let pk = match res {
-                db::SaveModListResult::Inserted { pk } => pk,
-                db::SaveModListResult::Missing { missing } => {
+            let files = match res {
+                db::InsertBuildAndReturnFiles::Files { files } => files,
+                db::InsertBuildAndReturnFiles::Missing { missing } => {
                     let value = json!({ "missing": missing });
                     let body = serde_json::to_string(&value)
                         .with_context(|| oof![json ~ logging::dbg(value)])
@@ -1139,19 +1179,6 @@ pub(crate) mod www {
                     return Err((StatusCode::BAD_REQUEST, body).into_response())?;
                 }
             };
-
-            /* TODO fix our api */
-            let _: () = db
-                .new_build(pk)
-                .recv_or_busy()
-                .await?
-                .map_err(internal_error)?;
-
-            let db::Files { files } = db
-                .mod_list_item_files(pk)
-                .recv_or_busy()
-                .await?
-                .map_err(internal_error)?;
 
             let work = Arc::new(cfg.inner_work_dir_for_build(pk));
 
@@ -1369,7 +1396,7 @@ pub(crate) mod www {
                 .ok()
                 .unwrap_or_default();
 
-            db.save_build_result(db::BuildResult {
+            db.save_build_result(db::SaveBuildResult {
                 pk,
                 exit_code,
                 output: output.unwrap_or_default(),
@@ -2732,9 +2759,9 @@ pub(crate) mod db {
             &mut self,
             item: NewWorkshopItem,
         ) -> Result<(bool, i64)> {
-            let mut tx = self.db.transaction_with_behavior(Immediate)?;
+            let mut tx = self.transaction_immediate()?;
 
-            let pk = create_timestamp(&mut tx)?;
+            let pk = tx.create_timestamp()?;
 
             let sql = r#"INSERT INTO "workshop-item"
                                      (pk, workshopid, title,
@@ -2768,56 +2795,107 @@ pub(crate) mod db {
             Ok((did_insert, row_ts))
         }
 
-        pub fn mod_list_item_files(&mut self, pk: i64) -> Result<Files> {
-            let tx = self.db.transaction()?;
+        pub fn insert_build_and_return_files(
+            &mut self,
+            pk: i64,
+        ) -> Result<InsertBuildAndReturnFiles> {
+            let tx = self.transaction_immediate()?;
+
+            let missing = {
+                /* report missing/non-downloaded items */
+                let sql = r#"SELECT w.pk
+                               FROM "mod-list-item" i
+                          LEFT JOIN "workshop-item" w ON w.pk = i.item
+                          LEFT JOIN "file"          f ON f.pk = w.file
+                              WHERE i.list = ?1
+                                AND f.data IS NULL"#;
+                tx.prepare_cached(sql)
+                    .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
+                    .query_map([pk], getscols![_])
+                    .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+                    .oof_lazy::<Error, _>(|| {
+                        aux!(sql ~ sql,
+                             params ~ logging::dbg((pk,)))
+                    })?
+            };
+
+            if missing.len() > 0 {
+                return Ok(InsertBuildAndReturnFiles::Missing { missing });
+            }
+
+            let sql = r#"INSERT INTO "build" (pk)
+                              VALUES (?1)"#;
+
+            tx.prepare_cached(sql)
+                .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
+                .execute([pk])
+                .oof_lazy::<Error, _>(|| {
+                    aux!(sql ~ sql,
+                         params ~ logging::dbg((pk,)))
+                })
+                .map(|n| debug_assert!(n == 1))?;
 
             let sql = r#"SELECT w.pk, f.data
                            FROM "mod-list-item" i
                       LEFT JOIN "workshop-item" w ON w.pk = i.item
                       LEFT JOIN "file"          f ON f.pk = w.file
-                          WHERE i.list=?1"#;
+                          WHERE i.list = ?1"#;
             let files: Vec<(i64, Box<[u8]>)> = tx
                 .prepare_cached(sql)
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
-                .query_map(params![pk], getscols![_, _])
+                .query_map([pk], getscols![_, _])
                 .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
                 .oof_lazy::<Error, _>(|| {
                     aux!(sql ~ sql,
                          params ~ logging::dbg((pk,)))
                 })?;
 
-            Ok(Files { files })
+            tx.commit()?;
+
+            Ok(InsertBuildAndReturnFiles::Files { files })
         }
 
-        pub fn get_build(&mut self, pk: i64) -> Result<Option<Build>> {
+        pub fn get_mod_list(&mut self, pk: i64) -> Result<Option<ModList>> {
             let tx = self.transaction()?;
 
             let sql = r#"SELECT b.exit_code, b.output, length(b.fragment),
                                 pi.publish, pi.url, p.exit_code
-                           FROM "build"        b
+                           FROM "mod-list"     l
+                      LEFT JOIN "build"        b ON b.pk=l.pk
                       LEFT JOIN "publish-item" pi
                              ON pi.rowid = (SELECT rowid
                                               FROM "publish-item"
-                                             WHERE build = b.pk
+                                             WHERE build = l.pk
                                           ORDER BY publish DESC
                                              LIMIT 1)
                       LEFT JOIN "publish" p 
                              ON p.pk = pi.publish
-                          WHERE b.pk=?1"#;
-            let build: Option<Build> = tx
+                          WHERE l.pk=?1"#;
+            let mod_list: Option<ModList> = tx
                 .prepare_cached(sql)
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
                 .query_row(params![pk], |row| {
-                    Ok(Build {
+                    Ok(ModList {
                         pk,
-                        exit_code: row.get(0)?,
-                        output: row.get(1)?,
                         items: vec![],
-                        fragment: match row.get(2)? {
-                            size if size > 0 => Some(BuildFragment { size }),
+                        build: match (row.get(0)?, row.get(1)?, row.get(2)?) {
+                            (Some(exit_code), Some(output), Some(fragment)) => {
+                                Some(Build {
+                                    pk,
+                                    exit_code,
+                                    output,
+                                    fragment: match fragment {
+                                        size if size > 0 => {
+                                            Some(BuildFragment { size })
+                                        }
+                                        _ => None,
+                                    },
+                                })
+                            }
                             _ => None,
                         },
-                        published: match (row.get(3)?, row.get(4)?, row.get(5)?) {
+                        published: match (row.get(3)?, row.get(3 + 1)?, row.get(3 + 2)?)
+                        {
                             (Some(pk), Some(url), Some(exit_code)) => {
                                 Some(BuildPublished {
                                     pk,
@@ -2835,7 +2913,7 @@ pub(crate) mod db {
                          params ~ logging::dbg((pk,)))
                 })?;
 
-            let Some(mut build) = build else {
+            let Some(mut mod_list) = mod_list else {
                 return Ok(None);
             };
 
@@ -2844,13 +2922,13 @@ pub(crate) mod db {
                            JOIN "workshop-item" w ON w.pk = m.item
                           WHERE m.list=?1
                        ORDER BY m.sort ASC"#;
-            build.items = tx
+            mod_list.items = tx
                 .prepare_cached(sql)
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
                 .query_map(params![pk], getscols![_, _])
                 .and_then(|rows| {
                     rows.map(|row| {
-                        row.map(|(pk, workshopid)| BuildItem { pk, workshopid })
+                        row.map(|(pk, workshopid)| ModListItem { pk, workshopid })
                     })
                     .collect::<rusqlite::Result<Vec<_>>>()
                 })
@@ -2859,7 +2937,53 @@ pub(crate) mod db {
                          params ~ logging::dbg((pk,)))
                 })?;
 
-            Ok(Some(build))
+            Ok(Some(mod_list))
+        }
+
+        pub fn get_build(&mut self, pk: i64) -> Result<Option<Build>> {
+            let tx = self.transaction()?;
+
+            let sql = r#"SELECT b.exit_code, b.output, length(b.fragment)
+                                -- pi.publish, pi.url, p.exit_code
+                           FROM "build"     b
+                      -- LEFT JOIN "publish-item" pi
+                      --        ON pi.rowid = (SELECT rowid
+                      --                         FROM "publish-item"
+                      --                        WHERE build = b.pk
+                      --                     ORDER BY publish DESC
+                      --                        LIMIT 1)
+                      -- LEFT JOIN "publish" p 
+                      --        ON p.pk = pi.publish
+                          WHERE b.pk=?1"#;
+            Ok(tx
+                .prepare_cached(sql)
+                .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
+                .query_row(params![pk], |row| {
+                    Ok(Build {
+                        pk,
+                        exit_code: row.get(0)?,
+                        output: row.get(1)?,
+                        fragment: match row.get(2)? {
+                            size if size > 0 => Some(BuildFragment { size }),
+                            _ => None,
+                        },
+                        // published: match (row.get(3)?, row.get(4)?, row.get(5)?) {
+                        //     (Some(pk), Some(url), Some(exit_code)) => {
+                        //         Some(BuildPublished {
+                        //             pk,
+                        //             url: non_empty_string(url),
+                        //             exit_code,
+                        //         })
+                        //     }
+                        //     _ => None,
+                        // },
+                    })
+                })
+                .optional()
+                .oof_lazy::<Error, _>(|| {
+                    aux!(sql ~ sql,
+                         params ~ logging::dbg((pk,)))
+                })?)
         }
 
         pub fn list_builds(&mut self) -> Result<Vec<BuildSummary>> {
@@ -2904,45 +3028,10 @@ pub(crate) mod db {
                 .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?)
         }
 
-        pub fn save_mod_list(
-            &mut self,
-            mod_list: SaveModList,
-        ) -> Result<SaveModListResult> {
+        pub fn save_mod_list(&mut self, mod_list: SaveModList) -> Result<i64> {
             let SaveModList { items } = mod_list;
 
             let mut tx = self.transaction_immediate()?;
-
-            let missing = {
-                /* report missing items as those that do not match this query */
-                let sql = r#"SELECT 1
-                               FROM "workshop-item"
-                              WHERE pk=?1
-                                AND file IS NOT NULL"#;
-                let mut stmt = tx
-                    .prepare_cached(sql)
-                    .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?;
-                items
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(e, &item)| {
-                        stmt.query_row(params![item], getscols![])
-                            .optional()
-                            .map(|o| match o {
-                                Some(()) => None,
-                                None => Some(item),
-                            })
-                            .oof_lazy::<Error, _>(|| {
-                                aux!(sql ~ sql,
-                                     params ~ logging::dbg((item,)))
-                            })
-                            .transpose()
-                    })
-                    .collect::<Result<Vec<_>>>()?
-            };
-
-            if missing.len() > 0 {
-                return Ok(SaveModListResult::Missing { missing });
-            }
 
             let pk = tx.create_timestamp()?;
 
@@ -2975,28 +3064,10 @@ pub(crate) mod db {
 
             tx.commit()?;
 
-            Ok(SaveModListResult::Inserted { pk })
+            Ok(pk)
         }
 
-        pub fn new_build(&mut self, pk: i64) -> Result<()> {
-            let tx = self.transaction_immediate()?;
-
-            let sql = r#"INSERT INTO "build" (pk)
-                              VALUES (?1)"#;
-
-            tx.prepare_cached(sql)
-                .oof_lazy::<Error, _>(|| aux!(sql ~ sql))?
-                .execute([pk])
-                .oof_lazy::<Error, _>(|| {
-                    aux!(sql ~ sql,
-                         params ~ logging::dbg((pk,)))
-                })
-                .map(|n| debug_assert!(n == 1))?;
-
-            Ok(tx.commit()?)
-        }
-
-        pub fn save_build_result(&mut self, b: BuildResult) -> Result<()> {
+        pub fn save_build_result(&mut self, b: SaveBuildResult) -> Result<()> {
             let tx = self.transaction_immediate()?;
 
             let sql = r#"UPDATE "build"
@@ -3277,24 +3348,30 @@ pub(crate) mod db {
     }
 
     #[derive(Debug, Clone, serde::Serialize)]
+    pub struct ModList {
+        pub pk: i64,
+        pub items: Vec<ModListItem>,
+        pub build: Option<Build>,
+        pub published: Option<BuildPublished>,
+    }
+
+    #[derive(Debug, Clone, serde::Serialize)]
+    pub struct ModListItem {
+        pub pk: i64,
+        pub workshopid: WorkshopId,
+    }
+
+    #[derive(Debug, Clone, serde::Serialize)]
     pub struct Build {
         pub pk: i64,
-        pub items: Vec<BuildItem>,
         pub exit_code: Option<i64>,
         pub output: Option<String>,
         pub fragment: Option<BuildFragment>,
-        pub published: Option<BuildPublished>,
     }
 
     #[derive(Debug, Clone, serde::Serialize)]
     pub struct BuildFragment {
         pub size: i64,
-    }
-
-    #[derive(Debug, Clone, serde::Serialize)]
-    pub struct BuildItem {
-        pub pk: i64,
-        pub workshopid: WorkshopId,
     }
 
     #[derive(Debug, Clone, serde::Serialize)]
@@ -3314,26 +3391,24 @@ pub(crate) mod db {
 
     #[derive(Debug, Clone, serde::Deserialize)]
     pub struct SaveModList {
+        // TODO allow upsert on mod lists with no build?
+        // pub pk: Option<i64>,
         pub items: Vec<i64>,
     }
 
     #[derive(Debug, Clone)]
-    pub enum SaveModListResult {
-        Inserted { pk: i64 },
+    pub enum InsertBuildAndReturnFiles {
+        /* [("workshop-item".pk, "file".data)] */
+        Files { files: Vec<(i64, Box<[u8]>)> },
         Missing { missing: Vec<i64> },
     }
 
     #[derive(Debug, Clone)]
-    pub struct BuildResult {
+    pub struct SaveBuildResult {
         pub pk: i64,
         pub exit_code: i64,
         pub output: String,
         pub fragment: Vec<u8>,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct Files {
-        pub files: Vec<(i64, Box<[u8]>)>,
     }
 
     pub struct NewPublish {
@@ -4102,6 +4177,16 @@ pub(crate) mod sqlext {
             }
         }
     }
+
+    // #[macro_export]
+    // macro_rules! optcols {
+    //     ($row:ident $( $t:tt )*) => {
+    //         match ($row.get(3)?, $row.get(4)?, $row.get(5)?) {
+    //             (Some(_3), Some(_4), Some(_5)) => Some((_3, _4, _5)),
+    //             _ => None,
+    //         }
+    //     }
+    // }
 
     pub struct SeqRow<'a> {
         pub row: &'a rusqlite::Row<'a>,
