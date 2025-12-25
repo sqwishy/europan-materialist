@@ -5,8 +5,10 @@ import { createStore } from "solid-js/store"
 
 import { z } from "zod"
 
-import { workshopUrl, ResponseDetails, Remotes, Resource, WorkshopItem, WorkshopCollection } from "./Remote";
+import { workshopUrl, ResponseDetails, Remotes, WorkshopItem, WorkshopCollection } from "./Remote";
 import { Toggle, Radio } from "./Input"
+import { createAsyncLazy, createAsync } from "./Async"
+import * as Remote from "./Remote"
 import * as F from "./F"
 import * as Misc from "./Misc"
 
@@ -38,54 +40,59 @@ export type Update =
 
 
 export const View = (params: Params) => {
-  const workshopItemVersions =
-    params.remotes!.getWorkshopItemVersions(params.workshopid)
+  const versions =
+		createMemo(() => params.remotes?.getWorkshopItemVersions(params.workshopid))
 
-	/* used to load a collection,
-	 * but we need to know when it's been started by the parent page ...  */
-  const workshopItemRefresh =
-		params.remotes!.refreshWorkshopItem(params.workshopid, { lazy: true })
+  const refreshing =
+		createMemo(() => params.remotes?.refreshWorkshopItem(params.workshopid, { lazy: true }) )
 
-	const collection = createMemo(() => {
-		const l = workshopItemRefresh.last()
-		if (l && "collection" in l)
-			return l
-	})
+	const downloading =
+		createMemo(() => {
+			const version = params.version
+			if (version != null)
+				return params.remotes?.downloadVersion(version, { lazy: true })
+		})
+
+	const collection =
+		createMemo(() => {
+			const l = refreshing()?.last()
+			if (l && "collection" in l)
+				return l
+		})
 
 	const anyLoading =
-		() => workshopItemVersions.isLoading()
-		   || workshopItemRefresh.isLoading() 
-		   || getDownload()?.isLoading()
+		() => versions()?.isLoading()
+		   || refreshing()?.isLoading()
+		   || downloading()?.isLoading()
 
-	const latestVersion = createMemo(() => workshopItemVersions.last()?.[0]);
+	const latestVersion =
+		createMemo(() => versions()?.last()?.[0]);
 
-	const getDownload = createMemo(() => {
-		let version = latestVersion();
-		if (version && !version.file && version.pk)
-			return params.remotes!.downloadVersion(version.pk, { lazy: true })
-	})
-
+	/* if we have never seen the workshop item before,
+	 * then try to refresh it from the steam workshop */
 	createEffect(() => {
-		let e = workshopItemVersions.error()
+		let e = versions()?.error()
 		if (e?.cause?.code == 404)
-			workshopItemRefresh.refetch()
+			refreshing()?.refetch()
 	})
 
+	/* after refreshing a workshop item from steam,
+	 * update our list of workshop item versions */
 	createEffect(() => {
-		const w = workshopItemRefresh.loaded()
+		const w = refreshing()?.loaded()
 		if (w && !("collection" in w))
-			workshopItemVersions.refetch()
+			versions()?.refetch()
 	})
 
 	createEffect(() => {
-		if (getDownload()?.loaded())
-			workshopItemVersions.refetch()
+		if (downloading()?.loaded())
+			versions()?.refetch()
 	})
 
 	/* default the selected version to the most recent */
 	createEffect(() => {
 		let version = latestVersion()?.pk;
-		/* untrack to void selecting when the user explicitly de-selects... */
+		/* untrack to avoid re-selecting when the user explicitly de-selects... */
 		if (version && !untrack(() => params.version))
 			params.update?.({ version })
 	})
@@ -119,7 +126,7 @@ export const View = (params: Params) => {
 								</Show>
 							</span>
 						</div>
-						<For each={workshopItemVersions.last()}>
+						<For each={versions()?.last()}>
 							{(item, i) =>
 								<div class="item" classList={{"loading": anyLoading()}}>
 									<span class="decoration"></span>
@@ -132,7 +139,7 @@ export const View = (params: Params) => {
 										</Show>
 									</span>
 
-									<Show when={i() == 0 && getDownload()}>
+									<Show when={i() == 0 && !item.file && downloading()}>
 										{r => 
 											<span class="smol">
 												<button
@@ -154,10 +161,10 @@ export const View = (params: Params) => {
 								</div>
 							}
 						</For>
-						<Show when={getDownload()?.error()}>
+						<Show when={downloading()?.error()}>
 							{err => <Misc.ErrorItems title={"download error"} err={err()} />}
 						</Show>
-						<Show when={workshopItemRefresh.error()}>
+						<Show when={refreshing()?.error()}>
 							{err => <Misc.ErrorItems title={"refresh error"} err={err()} />}
 						</Show>
 						</>
@@ -205,14 +212,15 @@ export const View = (params: Params) => {
 					</div>
 				</Match>
 
-				<Match when={workshopItemRefresh.error() || workshopItemVersions.error()}>
-					{err =>
+				<Match when={   (refreshing()?.error() && refreshing())
+				             || (versions()?.error() && versions())}>
+					{res =>
 						<>
-						<Misc.ErrorItems title={params.workshopid} err={err()} />
+						<Misc.ErrorItems title={params.workshopid} err={res().error()} />
 						<div class="item error">
 							<span class="decoration"></span>
 							<span class="clicky">
-								<button class="linkish narrow" onclick={workshopItemVersions.refetch}>
+								<button class="linkish narrow" onclick={() => res()?.refetch()}>
 									retry
 								</button>
 								<Show when={params.update}>

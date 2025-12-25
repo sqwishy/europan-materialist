@@ -1614,7 +1614,8 @@ pub(crate) mod www {
                 .with_context(|| oof![s ~ "acquire steamweb"])
                 .map_err(internal_error)?;
 
-            /* this should work on both items and collections */
+            /* this should return a page for both items and collections */
+            /* FIXME return not_found on 404 but not for other errors */
             let details: WorkshopItemFileDetails = steamweb
                 .filedetails(&cfg.steamcommunity.url, &workshopid)
                 .await

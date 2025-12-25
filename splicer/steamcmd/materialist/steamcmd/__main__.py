@@ -369,7 +369,7 @@ class Config(object):
     nsteamcmds: int
     image: str
     retries: int
-    afk_secs: float | None
+    afk_secs: float
 
     shutdown: trio.Event
 
@@ -380,7 +380,7 @@ class Config(object):
     afk_r: trio.MemoryReceiveChannel[float | None]
 
     def afk_task(self):
-        if self.afk_secs is not None:
+        if self.afk_secs > 0:
             return partial(
                 afk_shutdown_timer,
                 self.afk_r,
@@ -484,7 +484,7 @@ async def afk_shutdown_timer(afk_r, *, afk_secs, shutdown):
 
     while True:
 
-        if afk_at is None:
+        if afk_at > 0:
             ctx = nullcontext()
         else:
             ctx = trio.move_on_at(afk_at + afk_secs)
@@ -523,7 +523,7 @@ def main():
     parser.add_argument("-w", "--work", default="/tmp/spl-steamcmd-work", type=Path, help="temporary file download path. cannot be volume name")
     parser.add_argument("--work-outer", default=None, type=Path, help="path to --work passed to steamcmd with podman-remote. defaults to --work. If this is program is run in a container with --work bind mounted in, --work-outer should be the path on the host. This way, this program can read what steamcmd writes.")
     parser.add_argument("-s", "--podman-args", default=list(), action="append", type=str, help="extra podman args for steamcmd")
-    parser.add_argument("--afk-timer", default=None, type=float, help="number of minutes to shut down automatically after not receiving any requests")
+    parser.add_argument("--afk-timer", default=0.0, type=float, help="number of minutes to shut down automatically after not receiving any requests")
     # fmt: on
     args = parser.parse_args()
 
@@ -548,7 +548,7 @@ def main():
         req_r=req_r,
     )
 
-    if c.afk_secs is None:
+    if c.afk_secs > 0:
         middleware = []
     else:
         middleware = [Middleware(AfkShutdownMiddleware, afk_s=afk_s)]

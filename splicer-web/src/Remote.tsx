@@ -1,9 +1,10 @@
 import { createResource } from "solid-js";
-import type { ResourceReturn, ResourceActions } from "solid-js";
+import type { ResourceReturn } from "solid-js";
 
 import { z } from "zod"
 
 import * as F from "./F";
+import { AsyncResource, createAsync, createAsyncLazy } from "./Async";
 
 
 export type ResponseDetails = { code: number, status: string, body: string }
@@ -12,67 +13,37 @@ export type ResponseDetails = { code: number, status: string, body: string }
 export const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8847"
 
 
-export type Resource<T> = {
-	// Object.defineProperties makes typescript shit itself?
-	// (): () => T | null,
-	loaded: () => T | null,
-	unwrap: () => T | undefined,
-	hasLoaded: () => boolean,
-	isLoading: () => boolean,
-	last: () => T | null,
-	error: () => any,
-	hasError: () => boolean,
-} & ResourceActions<T | undefined>
-
-
-export const wrapResource =
-	<T,>([r, { mutate, refetch }]: ResourceReturn<T>): Resource<T> =>
-	({
-		/* should this have createMemo? */
-		loaded: () => loadedResource(r),
-		hasLoaded: () => Boolean(r.loading),
-		isLoading: () => r.loading,
-		last: () => latestResource(r),
-		error: () => r.error,
-		hasError: () => Boolean(r.error),
-		mutate,
-		refetch,
-		unwrap: r,
-	})
-
-
 export type RemoteOpts = { lazy?: boolean }
 
 
 export type Remote<P, T> = {
-	_map: Map<P, Resource<T>>,
-	resource: (_: P, opts?: RemoteOpts) => Resource<T>,
+	_map: Map<P, AsyncResource<T>>,
+	resource: (_: P, opts?: RemoteOpts) => AsyncResource<T | null>,
 }
 
 
 export type Remotes = {
-	getWorkshopItemVersions: (_: string, o?: RemoteOpts) => Resource<WorkshopItemList>,
-	refreshWorkshopItem: (_: string, o?: RemoteOpts) => Resource<WorkshopItem | WorkshopCollection>,
-	downloadVersion: (_: number, o?: RemoteOpts) => Resource<WorkshopItem>,
-	getBuild: (_: number | string, o?: RemoteOpts) => Resource<Build>,
-	// waitOnPublish: (_: number, o?: RemoteOpts) => Resource<PublishResult>,
-	// submitBuild: (_: SubmitBuild, o?: RemoteOpts) => Resource<Build>,
+	/* FIXME null cancer everywhere here because async is an option ... kek */
+	getWorkshopItemVersions: (_: string, o?: RemoteOpts) => AsyncResource<WorkshopItemList | null>,
+	refreshWorkshopItem: (_: string, o?: RemoteOpts) => AsyncResource<WorkshopItem | WorkshopCollection | null>,
+	downloadVersion: (_: number, o?: RemoteOpts) => AsyncResource<WorkshopItem | null>,
 }
 
 
 export const createRemote =
 	<P, R,>(f: (_: P) => Promise<R>): Remote<P, R> =>
 	{
-		let self: Remote<P, R>;
+		let self: Remote<P, R | null>;
 		return self = {
 			_map: new Map(),
 			resource: (i: P, o?: RemoteOpts) => {
 					let v
 					if ((v = self._map.get(i)) == undefined) {
+						const opts = { factory: () => f(i) }
 						if (o?.lazy)
-							v = wrapResource(createResource(i, F.ignoresFirstCall(f) as (_: P) => Promise<R>))
+							v = createAsyncLazy<R>(opts)
 						else
-							v = wrapResource(createResource(i, f))
+							v = createAsync<R | null>(f(i), opts)
 						self._map.set(i, v)
 					}
 					return v
@@ -85,9 +56,6 @@ export const createRemotes = (): Remotes => ({
 	getWorkshopItemVersions: createRemote(requestGetWorkshopItemList).resource,
 	refreshWorkshopItem: createRemote(requestRefreshItem).resource,
 	downloadVersion: createRemote(requestDownloadVersion).resource,
-	getBuild: createRemote(requestGetBuild).resource,
-	// waitOnPublish: createRemote(requestWaitOnPublish).resource,
-	// submitBuild: createRemote(requestSubmitBuild).resource,
 })
 
 
@@ -141,7 +109,6 @@ export const requestGetWorkshopItemList = async (workshopid: string): Promise<Wo
 
 /* POST /workshop-item/:pk/download/ */
 export const requestDownloadVersion = async (pk: number): Promise<WorkshopItem> => {
-	// await F.zzzMs(456)
 	const res = await fetch(`${API}/workshop-item/${pk}/download/`,
 	                        { method: "POST" })
 	if (!res.ok)
@@ -178,7 +145,6 @@ export const requestRefreshItem = async (
 
 /* POST /mod-list/ */
 export const requestSaveModList = async (m: SaveModList): Promise<ModList> => {
-	// await F.zzzMs(468)
 	const res = await fetch(`${API}/mod-list/`,
 	                        { method: 'POST', body: JSON.stringify(m) })
 
@@ -191,7 +157,6 @@ export const requestSaveModList = async (m: SaveModList): Promise<ModList> => {
 
 /* GET /mod-list/:pk/ */
 export const requestGetModList = async (pk: number | string): Promise<ModList> => {
-	// await F.zzzMs(468)
 	const res = await fetch(`${API}/mod-list/${pk}/`)
 
 	if (!res.ok)
@@ -315,9 +280,6 @@ export type Build = z.infer<typeof Build>
 export type BuildSummary = z.infer<typeof BuildSummary>
 export type BuildSummaryList = z.infer<typeof BuildSummaryList>
 
-
-	// items: z.array(ModListItem),
-	// published: z.nullish(BuildPublished),
 
 export const SaveModList = z.object({
 	items: z.array(z.number()),

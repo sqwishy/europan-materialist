@@ -2,13 +2,12 @@ import { createResource } from "solid-js";
 import { For, Show } from "solid-js/web";
 import { A } from '@solidjs/router'
 
-import { wrapResource, requestGetBuildList } from "./Remote";
+import { requestGetBuildList } from "./Remote";
+import { createAsync } from "./Async";
 import * as Misc from "./Misc";
 
 export const Landing = () => {
-	const list = wrapResource(createResource(requestGetBuildList));
-
-	console.log(list)
+	const list = createAsync(requestGetBuildList());
 
 	return (
 		<>
