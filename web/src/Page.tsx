@@ -108,7 +108,7 @@ const loadedResource = <T,>(resource: { loading: boolean, error: any, (): T | un
 }
 
 
-export type Build = { hash?: string, date: Date }
+export type Build = { hash?: string, date: Date, splicer?: string }
 
 
 export const Page = (
@@ -185,6 +185,14 @@ export const Page = (
               <summary>
                 <LoadOrder loadOrder={getCurrentLoadableBundle().load_order} />
               </summary>
+
+              <Show when={props.build.splicer}>
+                <div class="loadable-bundle">
+                  <span class="muted smol">
+                    select a load order below or <a href={props.build.splicer} target="_blank" rel="noopener">make your own</a>
+                  </span>
+                </div>
+              </Show>
 
               <For each={Game.BUNDLES}>
                 {(bundle) => (
@@ -296,9 +304,9 @@ const LoadOrderListItem = (props: { package: Game.Package, link?: boolean }) => 
 const LoadOrderDetails = (props: { loadOrder: Game.Package[] }) => {
   return (
     <Show when={(props.loadOrder.length || 0) > 1}>
-      <details class="select-bundle">
+      <details class="load-order">
         <summary>
-          <div style="font-size: 130%; padding: 2px 6px; text-align: right">
+          <div style="font-size: 130%; padding: 2px 4px; text-align: right">
             <i style="mask: var(--info) no-repeat 0 0/100% 100%; background: var(--muted)">&emsp;</i>
           </div>
         </summary>
@@ -724,7 +732,7 @@ function LocalizedIdentifier({ children } : { children : Game.Identifier | Game.
         <a
           class="wiki-link"
           href={`${WIKI_BASE_URL}${toEnglish(children)}`}
-          target="blank"
+          target="_blank"
           rel="noopener"
         >
           {localize(children)}

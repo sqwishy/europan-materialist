@@ -113,16 +113,20 @@ button:not(.linkish),
 a.buttonish,
 input[type=text],
 select,
-details.select-bundle
-  {        padding: 4px 9px;
-       font-family: 'Exo 2', sans-serif;
+.ctl > details
+  {    font-family: 'Exo 2', sans-serif;
    text-decoration: none;
      margin-bottom: 3px;
   background-color: var(--input);
             border: 1px solid var(--outline);
         box-shadow: 3px 3px var(--shadow) }
 a.buttonish
-  {    display: inline-block }
+  { display: inline-block }
+button:not(.linkish),
+a.buttonish,
+input[type=text],
+select
+  { padding: 4px 9px }
 
 button
   { cursor: pointer; }
@@ -149,20 +153,20 @@ header .dismiss
   { float: right; margin-top: 0; margin-bottom: 0 }
 
 
-details.select-bundle > summary,
-details.select-bundle > .loadable-bundle a
+.ctl > details > summary,
+.ctl > details > .loadable-bundle > a
   { padding-right: 2ch; display: block }
-details.select-bundle > summary
-  { background: no-repeat center right 6px / 2ch var(--chevron-open) }
-details.select-bundle > .loadable-bundle a.active
-  { background: no-repeat center right 6px / 2ch var(--chevron-active) }
+.ctl > details > summary
+  { background: no-repeat center right 4px / 2ch var(--chevron-open) }
+.ctl > details > .loadable-bundle a.active
+  { background: no-repeat center right 4px / 2ch var(--chevron-active) }
 @media (pointer: fine)
-  { details.select-bundle > .loadable-bundle a.inactive:hover
-    { background: no-repeat center right 6px / 2ch var(--chevron-hover) } }
+  { .ctl > details > .loadable-bundle a.inactive:hover
+    { background: no-repeat center right 4px / 2ch var(--chevron-hover) } }
 
 details.select-bundle
   { padding: 0 }
-details.select-bundle ol.load-order
+details.select-bundle > *
   { padding: 4px 9px }
 details.select-bundle > summary
   { list-style: none }

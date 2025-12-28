@@ -45,6 +45,9 @@ import { BUNDLES } from '../assets/bundles'
 const BUILD = {
   hash: import.meta.env.VITE_BUILD_HASH,
   date: new Date(import.meta.env.VITE_BUILD_DATE || "2222-02-22T00:00:00-00:00"),
+	splicer: "VITE_SPLICER_URL" in import.meta.env
+		? import.meta.env.VITE_SPLICER_URL
+		: "https://materialist-splicer.pages.dev/b/",
 };
 
 const DumbErrorMessage = <footer><p><b>oops</b> something hecked up! maybe reload the page and hope it doesn't happen again?</p></footer>
