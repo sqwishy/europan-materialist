@@ -1,0 +1,11 @@
+[Match]
+Name=spl-peer
+
+[Network]
+Address=10.23.23.1/28
+LinkLocalAddressing=no
+DHCPServer=no
+IPMasquerade=ipv4
+LLDP=no
+IPv6AcceptRA=no
+IPv6SendRA=no

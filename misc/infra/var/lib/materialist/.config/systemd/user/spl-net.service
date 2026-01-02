@@ -1,0 +1,24 @@
+[Unit]
+RequiresMountsFor=%t/containers
+
+Requires=spl-stubby.service
+Before=spl-stubby.service
+
+Requires=spl-dnsmasq.service
+Before=spl-dnsmasq.service
+
+[Service]
+SyslogIdentifier=%N
+ExecStartPre=/usr/bin/podman pod create --infra-conmon-pidfile=%t/%N.pid --replace --exit-policy stop --network none --infra-name spl-net-infra --name spl-net
+ExecStart=/usr/bin/podman pod start spl-net
+ExecStartPost=/var/lib/materialist/setup-spl-net
+ExecStop=/usr/bin/podman pod stop --ignore --time=10 spl-net
+ExecStopPost=/usr/bin/podman pod rm --ignore --force spl-net
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Type=forking
+Restart=on-failure
+RestartSec=15s
+PIDFile=%t/%N.pid
+
+[Install]
+WantedBy=default.target

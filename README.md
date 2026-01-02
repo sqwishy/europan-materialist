@@ -23,3 +23,5 @@ You can contact me by email or posting in [this thread in the Undertow Games "se
 ![](misc/screenshot-chem.png)
 
 ![](misc/screenshot-splicer.png)
+
+See [SYSTEMS.md](./SYSTEMS.md) for a technical breakdown of the software in this project and notes about infrastructure & operations.

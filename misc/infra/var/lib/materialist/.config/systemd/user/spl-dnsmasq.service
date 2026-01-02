@@ -1,0 +1,20 @@
+[Unit]
+RequiresMountsFor=%t/containers
+
+# this doesn't work and i have no idea why
+# BindsTo=spl-net.service
+# After=spl-net.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+KillMode=mixed
+ExecStop=/usr/bin/podman rm -v -f -i spl-dnsmasq
+ExecStopPost=-/usr/bin/podman rm -v -f -i spl-dnsmasq
+Delegate=yes
+Type=notify
+NotifyAccess=all
+SyslogIdentifier=%N
+ExecStart=/usr/bin/podman run --name spl-dnsmasq --pull=never --replace --rm --cgroups=split --sdnotify=conmon --detach --pod spl-net splicer-pod-dnsmasq --server=127.0.0.1#5353 --log-facility=-
+
+[Install]
+WantedBy=default.target

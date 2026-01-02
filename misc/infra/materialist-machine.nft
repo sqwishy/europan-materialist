@@ -1,0 +1,17 @@
+#!/usr/sbin/nft -f
+
+destroy table inet materialist-machine
+
+table inet materialist-machine {
+    chain input {
+        type filter hook input priority filter
+        ct state established,related accept
+        iifgroup 66    ip daddr { 10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12 } reject
+        iifgroup 66    ip6 daddr { fc00::/7 } reject
+    }
+    chain forward {
+        type filter hook forward priority filter
+        iifgroup 66    ip daddr { 10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12 } reject
+        iifgroup 66    ip6 daddr { fc00::/7 } reject
+    }
+}

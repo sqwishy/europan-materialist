@@ -1,0 +1,7 @@
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/link-friend.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

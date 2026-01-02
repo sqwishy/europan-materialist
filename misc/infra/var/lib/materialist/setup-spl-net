@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+/usr/bin/podman unshare \
+	/usr/bin/nsenter -t $(podman inspect spl-net-infra -f '{{.State.Pid}}') --net \
+	/usr/bin/socat - unix:/run/link-friend.unix

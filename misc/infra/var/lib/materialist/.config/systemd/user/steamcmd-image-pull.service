@@ -1,0 +1,6 @@
+[Unit]
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/podman pull docker.io/steamcmd/steamcmd:alpine

@@ -1,0 +1,6 @@
+[Socket]
+# ListenStream=10.23.23.1:28998
+ListenStream=%h/spl-sock/spl-steamcmd.unix
+
+[Install]
+WantedBy=default.target

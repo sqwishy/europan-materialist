@@ -1,0 +1,37 @@
+[Unit]
+RequiresMountsFor=%t/containers
+
+Requires=podman.socket
+After=podman.socket
+
+Requires=spl-steamcmd.socket
+After=spl-steamcmd.socket
+
+Requires=spl-net.service
+After=spl-net.service
+
+# Requires=spl-steamcmd.service
+# Before=spl-steamcmd.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+KillMode=mixed
+ExecStop=/usr/bin/podman rm -v -f -i spl-api
+ExecStopPost=-/usr/bin/podman rm -v -f -i spl-api
+Delegate=yes
+Type=notify
+NotifyAccess=all
+SyslogIdentifier=%N
+ExecStart=/usr/bin/podman run --name spl-api \
+	--pull=never --replace --rm --cgroups=split --sdnotify=conmon --detach --pod spl-net --stop-signal sigint --stop-timeout 90 \
+	-v %h/api-config:/api/config \
+	-v %h/api-state:/api/state \
+	-v %h/spl-sock:/run/spl-sock \
+	-v /tmp/spl-api-work:/tmp/spl-api-work \
+	-v %t/podman:/run/user/1000/podman \
+	splicer-api:latest
+Restart=on-failure
+RestartSec=15s
+
+[Install]
+WantedBy=default.target
