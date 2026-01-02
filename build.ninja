@@ -1,0 +1,46 @@
+# This is a reference and task runner, not intented as a proper build thing
+# with dependency tracking or whatever. I'm just using ninja for this because I like it.
+
+rule podman-build
+    command = podman build -f $in . $args
+
+rule podman-build-git
+    command = git archive HEAD | podman build -f $in - $args
+
+rule podman-run
+    command = podman run --rm -it $args
+
+
+build splicer-build-build: podman-build splicer/build/Containerfile
+    args = -t splicer-build
+
+
+build splicer-publish-build: podman-build-git splicer/publish/Containerfile
+    args = -t splicer-publish
+
+
+build splicer-steamcmd-build: podman-build splicer/steamcmd/Containerfile
+    args = -t splicer-steamcmd
+
+
+build splicer-api-build: podman-build splicer/api/Containerfile
+    args = -t splicer-api $
+        --build-arg=BUILD_ARGS=-j2 $
+        -v /tmp/cargo-target:/build/api/target $
+        -v ~/.cargo:/root/.cargo:ro
+
+
+build splicer-web-build: podman-build-git splicer-web/Containerfile
+    args = -t splicer-web
+
+build splicer-web-publish: podman-run
+    args = $
+        --mount type=volume,src=materialist-secrets,dst=/run/secrets/cloudflare,ro,subpath=cloudflare $
+        -e VITE_API_URL=https://materialist-proxy.sqwishy.workers.dev $
+        -e PROJECT_NAME=materialist-splicer $
+        splicer-web
+
+
+build _: phony
+
+default _

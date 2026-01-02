@@ -1,0 +1,81 @@
+
+db "/tmp/materialist-rs.sqlite"
+
+// NYI // shutdown after not handling a request after this long
+// afk-timer-sec 0
+
+www {
+    // listen address, not used when activated by systemd socket activation
+    listen "127.0.0.1:8847"
+
+    // value of Authorization header for "private" URLs at /x/...
+    // with an empty debug-auth, those routes will always return 404
+    debug-auth ""
+
+    wait-on-publish-poll-interval-ms 500
+
+    // extra headers to add to the end of each response
+    response-headers {
+        access-control-allow-origin *
+        access-control-allow-methods POST,GET,OPTIONS
+    }
+
+}
+
+// access to public/unlisted workshop pages on steam community
+steamcommunity {
+    url "https://steamcommunity.com/"
+    concurrency 4
+    read-timeout-ms 30_000
+    user-agent "europan-materialist/0 (materialist.pages.dev)"
+}
+
+// access to the steamcmd downloading service in this project
+steamcmd {
+    url "http://localhost:8888/"
+    concurrency 3
+    user-agent "europan-materialist/0 (materialist.pages.dev)"
+
+    // a header sent to steamcmd that determines how long wait (in seconds) to begin processing a
+    // request before giving up and returning 503 service unavailable or something.
+    // if this is omitted, it's the same as not waiting, inadvisable as that error will be
+    // propogated to the end user at this time.
+    prefer-wait-sec 180
+}
+
+podman {
+    unix "/run/user/1000/podman/podman.sock"
+    concurrency 8
+    user-agent "europan-materialist/0 (materialist.pages.dev)"
+}
+
+build {
+    image splicer-build
+
+    // podman volume name to use as vanilla core package
+    vanilla barotrauma
+
+    // path in this container to temporary files to be shared with the build container
+    // can be the same value as in the publish section
+    work-inner "/tmp/spl-api-work"
+    // path on host to work-inner; specified as a bind mount when creating build container
+    work-outer "/tmp/spl-api-work"
+}
+
+publish {
+    image splicer-publish
+
+    // path in this container to temporary files to be shared with the publish container
+    // can be the same value as in the build section
+    work-inner "/tmp/spl-api-work"
+    // path on host to work-inner; specified as a bind mount when creating publish container
+    work-outer "/tmp/spl-api-work"
+
+    // A volume containing a file named `cloudflare` that looks like;
+    // CLOUDFLARE_ACCOUNT_ID=...
+    // CLOUDFLARE_API_TOKEN=...
+    secrets-volume materialist-secrets
+    // value for PROJECT_NAME environment variable in publish container
+    deploy-site materialist-next
+}
+

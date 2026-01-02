@@ -2,11 +2,6 @@
 #
 # podman build -f path/to/this/Containerfile .
 
-# FROM alpine:latest
-# 
-# RUN apk update \
-#  && apk add python3 py3-lxml py3-pillow
-
 FROM registry.fedoraproject.org/fedora-minimal
 
 RUN microdnf install -y python3 python3-lxml python3-pillow \
